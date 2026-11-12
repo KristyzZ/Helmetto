@@ -1,6 +1,6 @@
 # Helmetto ESP8266
 
-Šalmo ESP8266 kas sekundę siunčia vieno baito heartbeat (`0x01`) per ESP-NOW į paspirtuko STA MAC `68:C6:3A:A0:59:45`. Abu įrenginiai naudoja 2,4 GHz 6 kanalą. Paspirtukas seka šalmo ryšį ir kas 500 ms nuskaito Joy-IT SEN-MPU6050 pagreitį ir giroskopą.
+Šalmo ESP8266 kas sekundę siunčia vieno baito heartbeat (`0x01`) per ESP-NOW į paspirtuko STA MAC `68:C6:3A:A0:59:45`. Abu įrenginiai naudoja 2,4 GHz 6 kanalą. Paspirtukas seka šalmo ryšį ir maždaug kas 10 ms nuskaito Joy-IT SEN-MPU6050 pagreitį ir giroskopą. Matavimai į Serial Monitor išvedami kas 500 ms.
 
 | Arduino sketch'as | Įrenginys |
 | --- | --- |
@@ -33,5 +33,7 @@ Atjunk paspirtuko ESP8266 maitinimą prieš jungdamas laidus.
 - Įjungus paspirtuką matysi `Waiting for helmet...`. Prijungus jutiklį turėtų pasirodyti `MPU6050 initialized` ir ACC bei GYRO matavimai. Ramybės būsenoje pagreičio vektoriaus ilgis turėtų būti maždaug 1 g, o giroskopo reikšmės arti nulio.
 - Įjungus šalmą, paspirtukas po pirmo paketo rodo `HELMET CONNECTED!`.
 - Išjungus šalmą, praėjus 3 s nuo paskutinio paketo, pasirodo `Helmet signal lost, waiting...`, o praėjus 15 s – `ALERT: HELMET DISCONNECTED!`. Vėl įjungus šalmą, paspirtukas grįžta į `HELMET CONNECTED!`.
+
+Paspirtukui užfiksavus bendrą pagreitį nuo 2,5 g, Serial Monitor rodo `IMPACT` ir išmatuotą pagreitį. Tai bandomasis slenkstis. Akselerometro diapazonas yra ±8 g, o Z ašiai taikoma su šiuo moduliu išmatuota +0,11 g korekcija.
 
 Būsima integracija siųs paspirtuko telemetriją per HTTP į komandos kuriamą API. Dabartiniame variante šalmo būsena ir MPU6050 matavimai rodomi per Serial Monitor.
