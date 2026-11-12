@@ -14,6 +14,8 @@ export interface MapViewProps {
   stale?: boolean;
   /** Marker colour follows the device status. */
   alert?: boolean;
+  /** Name shown as an initial inside the marker. */
+  label?: string;
   /** Saved safe zone, hidden while a draft is being edited. */
   zone: Geofence | null;
   zoneTone?: 'ok' | 'alert' | 'unknown';
@@ -29,6 +31,12 @@ export interface MapViewProps {
 
 const DEFAULT_CENTER: L.LatLngTuple = [54.6872, 25.2797];
 
+const TILES = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+const ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
+
+const escapeHtml = (text: string) =>
+  text.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+
 const css = (name: string) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 const toLatLng = (p: GeoPoint): L.LatLngTuple => [p.lat, p.lon];
 
@@ -43,7 +51,7 @@ function zoneLayer(zone: Geofence, style: L.PathOptions): L.Path {
 
 /** Thin React wrapper around a Leaflet map with OpenStreetMap tiles. */
 export function MapView(props: MapViewProps) {
-  const { position, stale, alert, zone, zoneTone = 'unknown', draft, draftInvalid, follow, interactive = true } = props;
+  const { position, stale, alert, label, zone, zoneTone = 'unknown', draft, draftInvalid, follow, interactive = true } = props;
   const container = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map | null>(null);
   const marker = useRef<L.Marker | null>(null);
@@ -64,6 +72,7 @@ export function MapView(props: MapViewProps) {
       zoom: position || zone ? 16 : 13,
       zoomControl: false,
       attributionControl: interactive,
+      zoomSnap: 0.5,
       dragging: interactive,
       touchZoom: interactive,
       scrollWheelZoom: interactive,
@@ -71,10 +80,9 @@ export function MapView(props: MapViewProps) {
       boxZoom: false,
       keyboard: interactive,
     });
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-    }).addTo(instance);
+    L.tileLayer(TILES, { maxZoom: 19, attribution: ATTRIBUTION }).addTo(instance);
+    if (interactive) L.control.zoom({ position: 'topright', zoomInTitle: 'Zoom in', zoomOutTitle: 'Zoom out' }).addTo(instance);
+    instance.attributionControl?.setPrefix(false);
     draftLayers.current = L.layerGroup().addTo(instance);
 
     // a tap on the map adds a corner (polygon) or moves the centre (circle)
@@ -111,11 +119,12 @@ export function MapView(props: MapViewProps) {
       marker.current = null;
       return;
     }
+    const initial = label?.trim().charAt(0).toUpperCase() ?? '';
     const icon = L.divIcon({
       className: '',
-      html: `<div class="pin pin--${stale ? 'stale' : alert ? 'alert' : 'ok'}"><i></i></div>`,
-      iconSize: [32, 32],
-      iconAnchor: [16, 16],
+      html: `<div class="pin pin--${stale ? 'stale' : alert ? 'alert' : 'ok'}"><span class="pin__halo"></span><b>${escapeHtml(initial)}</b></div>`,
+      iconSize: [44, 44],
+      iconAnchor: [22, 22],
     });
     const latlng: L.LatLngTuple = [position.latitude, position.longitude];
     if (!marker.current) {
@@ -125,7 +134,7 @@ export function MapView(props: MapViewProps) {
       marker.current.setIcon(icon);
     }
     if (follow) instance.panTo(latlng, { animate: true, duration: 0.8 });
-  }, [position?.latitude, position?.longitude, stale, alert, follow]);
+  }, [position?.latitude, position?.longitude, stale, alert, follow, label]);
 
   // saved safe zone
   const zoneKey = zone ? JSON.stringify(zone) : '';
@@ -135,12 +144,13 @@ export function MapView(props: MapViewProps) {
     zoneRef.current?.remove();
     zoneRef.current = null;
     if (zone && !draft) {
-      const color = css(zoneTone === 'unknown' ? '--ink' : `--${zoneTone}-solid`);
+      const color = css(zoneTone === 'unknown' ? '--accent' : `--${zoneTone}-solid`);
       zoneRef.current = zoneLayer(zone, {
         color,
-        weight: 2,
+        weight: 2.5,
+        opacity: 0.9,
         fillColor: color,
-        fillOpacity: zoneTone === 'unknown' ? 0.07 : 0.12,
+        fillOpacity: 0.1,
         interactive: false,
       }).addTo(instance);
     }
@@ -167,7 +177,7 @@ export function MapView(props: MapViewProps) {
     if (!group || !instance) return;
     group.clearLayers();
     if (!draft) return;
-    const color = css(draftInvalid ? '--alert-solid' : '--ink');
+    const color = css(draftInvalid ? '--alert-solid' : '--accent');
     const style: L.PathOptions = { color, weight: 2.5, dashArray: '2 7', fillColor: color, fillOpacity: 0.14, interactive: false };
     const change = (next: Draft) => live.current.onDraftChange?.(next);
 

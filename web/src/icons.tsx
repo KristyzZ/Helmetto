@@ -21,12 +21,18 @@ const PATHS: Record<string, ReactNode> = {
   undo: <><path d="M8 5 3.500 9.500 8 14" /><path d="M4 9.500h10a6 6 0 0 1 0 12h-3" /></>,
   edit: <><path d="m4 20 1-4.500L16.500 4l3.500 3.500L8.500 19z" /><path d="m14 6.500 3.500 3.500" /></>,
   draw: <><path d="M5 7.500 12 4l7 5-2.500 9.500H8z" /><circle cx="5" cy="7.500" r="1.300" /><circle cx="12" cy="4" r="1.300" /><circle cx="19" cy="9" r="1.300" /><circle cx="16.500" cy="18.500" r="1.300" /><circle cx="8" cy="18.500" r="1.300" /></>,
+  refresh: <><path d="M19.500 12a7.500 7.500 0 1 1-2.200-5.300" /><path d="M19.500 4.500v4h-4" /></>,
+  plus: <path d="M12 5v14M5 12h14" />,
+  minus: <path d="M5 12h14" />,
+  chart: <><path d="M4 20h16" /><path d="M7 16.500v-5" /><path d="M12 16.500V6.500" /><path d="M17 16.500v-8" /></>,
+  bolt: <path d="M13 3 5.500 13.500H12L11 21l7.500-10.500H12z" />,
+  pin: <><path d="M12 21s-6.500-5.600-6.500-11a6.500 6.500 0 0 1 13 0c0 5.400-6.500 11-6.500 11z" /><circle cx="12" cy="10" r="2.300" /></>,
   clock: <><circle cx="12" cy="12" r="8.500" /><path d="M12 7.500V12l3 2" /></>,
 };
 
 export type IconName = keyof typeof PATHS;
 
-export function Icon({ name, size = 22 }: { name: IconName; size?: number }) {
+export function Icon({ name, size = 22, stroke = 1.8 }: { name: IconName; size?: number; stroke?: number }) {
   return (
     <svg
       className="icon"
@@ -35,7 +41,7 @@ export function Icon({ name, size = 22 }: { name: IconName; size?: number }) {
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth="1.800"
+      strokeWidth={stroke}
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"

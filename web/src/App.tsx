@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { SafetyEvent } from '@helmetto/shared';
 import { DemoPanel } from './DemoPanel';
+import { Skeleton } from './Skeleton';
 import { Icon, type IconName } from './icons';
 import { useLive } from './live';
 import { showBrowserNotification } from './notify';
@@ -114,20 +115,26 @@ export function App() {
     <div className={`app app--${tab}`}>
       <header className="topbar">
         <button className="logo" onClick={tapLogo} aria-label="Helmetto">
-          <img src="/icon.svg" alt="" width="28" height="28" />
+          <img src="/icon.svg" alt="" width="30" height="30" />
+          <span className="logo__word">Helmetto</span>
         </button>
-        {device && live.devices.length > 1 ? (
-          <select className="topbar__select" value={device.device_id} onChange={(e) => select(e.target.value)} aria-label="Scooter">
-            {live.devices.map((d) => (
-              <option key={d.device_id} value={d.device_id}>{displayName(d)}</option>
-            ))}
-          </select>
-        ) : (
-          <span className="topbar__name">{device ? displayName(device) : 'Helmetto'}</span>
+        {device && live.devices.length > 1 && (
+          <label className="switcher">
+            <span className="avatar avatar--xs" aria-hidden="true">{displayName(device).charAt(0).toUpperCase()}</span>
+            <select value={device.device_id} onChange={(e) => select(e.target.value)} aria-label="Scooter">
+              {live.devices.map((d) => (
+                <option key={d.device_id} value={d.device_id}>{displayName(d)}</option>
+              ))}
+            </select>
+            <Icon name="chevron" size={14} stroke={2.2} />
+          </label>
         )}
-        <span className="state topbar__link" title={`Server connection: ${live.connection}`}>
+        <span
+          className={`conn conn--${live.connection === 'live' ? 'ok' : down ? 'alert' : 'warn'}`}
+          title={`Server connection: ${live.connection}`}
+        >
           <i className={`dot tone-${live.connection === 'live' ? 'ok' : down ? 'alert' : 'warn'} ${live.connection === 'live' ? 'dot--pulse' : ''}`} />
-          {live.connection === 'live' ? 'Live' : down ? 'No connection' : 'Connecting'}
+          {live.connection === 'live' ? 'Live' : down ? 'Offline' : live.connection === 'polling' ? 'Syncing' : 'Connecting'}
         </span>
       </header>
 
@@ -135,7 +142,7 @@ export function App() {
         <div className="strip tone-warn" role="status">
           <Icon name="signalOff" size={18} />
           <strong>Can't reach Helmetto</strong>
-          <span>Status may be out of date</span>
+          <span>Showing last known status</span>
         </div>
       )}
       {strip && (
@@ -147,20 +154,25 @@ export function App() {
         </button>
       )}
 
-      <main className="content">
+      <main className="content" key={live.loaded && device ? tab : 'blank'}>
         {!live.loaded ? (
-          <div className="blank">
-            {down ? (
-              <><Icon name="signalOff" size={28} /><strong>Can't load your scooters</strong><span>Trying again…</span></>
-            ) : (
-              <div className="spinner" aria-label="Loading" />
-            )}
-          </div>
+          down ? (
+            <div className="blank">
+              <span className="blank__art tone-warn"><Icon name="signalOff" size={30} /></span>
+              <strong>Can't reach Helmetto</strong>
+              <span>Check your internet connection. We keep trying in the background.</span>
+              <button className="button button--primary" onClick={() => location.reload()}>
+                <Icon name="refresh" size={18} /> Try again
+              </button>
+            </div>
+          ) : (
+            <Skeleton />
+          )
         ) : !device ? (
           <div className="blank">
-            <Icon name="scooter" size={28} />
+            <span className="blank__art tone-unknown"><Icon name="scooter" size={30} /></span>
             <strong>No scooters yet</strong>
-            <span>Add a device on the server to start.</span>
+            <span>Once a Helmetto scooter is added, its status shows up here.</span>
           </div>
         ) : tab === 'home' ? (
           <Dashboard device={device} events={events} serverNow={serverNow} onOpenMap={() => go('map')} onOpenAlerts={() => go('alerts')} />
@@ -188,7 +200,9 @@ export function App() {
             setToast(null);
           }}
         >
-          <i className={`dot tone-${toast.event.severity === 'alert' ? 'alert' : 'ok'}`} />
+          <span className={`disc disc--xs tone-${toast.event.severity === 'alert' ? 'alert' : 'ok'}`}>
+            <Icon name={EVENT_ICON[toast.event.type]} size={14} stroke={2.2} />
+          </span>
           <strong>{toast.about ? `${toast.about}: ` : ''}{title(toast.event.type)}</strong>
         </button>
       )}
@@ -197,10 +211,10 @@ export function App() {
         {TABS.map((item) => (
           <button key={item.id} className="tab" onClick={() => go(item.id)} aria-current={tab === item.id ? 'page' : undefined}>
             <span className="tab__icon">
-              <Icon name={item.icon} />
+              <Icon name={item.icon} stroke={tab === item.id ? 2.2 : 1.8} />
               {item.id === 'alerts' && active.length > 0 && <b className={`badge tone-${alertTone(active[0]!)}`}>{active.length}</b>}
             </span>
-            {item.label}
+            <span className="tab__label">{item.label}</span>
           </button>
         ))}
       </nav>

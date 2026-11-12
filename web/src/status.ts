@@ -1,4 +1,4 @@
-import { EVENT_INFO, type AlertType, type DeviceState, type SafetyEventType } from '@helmetto/shared';
+import { EVENT_INFO, type AlertType, type DeviceState, type SafetyEvent, type SafetyEventType } from '@helmetto/shared';
 import type { IconName } from './icons';
 import { ago, duration } from './time';
 
@@ -208,4 +208,107 @@ export function zoneLabel(device: DeviceState): { tone: Tone; text: string } {
   if (device.active_alerts.includes('geofence_exit')) return { tone: 'alert', text: 'Outside safe zone' };
   if (device.zone_status === 'inside') return { tone: 'ok', text: 'In safe zone' };
   return { tone: 'unknown', text: 'Safe zone set' };
+}
+
+export interface Check {
+  key: 'helmet' | 'crash' | 'zone' | 'scooter';
+  icon: IconName;
+  label: string;
+  value: string;
+  tone: Tone;
+  help: string;
+}
+
+/**
+ * The four safety questions a parent has, answered in one word each.
+ * Shown inside the hero so the whole situation reads at a glance.
+ */
+export function checks(device: DeviceState, serverNow: number): Check[] {
+  const [scooterChip, helmetChip] = chips(device, serverNow) as [Chip, Chip];
+  const reported = hasReported(device);
+  const live = device.online;
+  const crashed = live && device.active_alerts.includes('crash_detected');
+  const crash: Check = !reported || !live
+    ? { key: 'crash', icon: 'shield', label: 'Crash', value: 'Unknown', tone: 'unknown', help: 'Crash detection works while the scooter is online.' }
+    : crashed
+      ? { key: 'crash', icon: 'alert', label: 'Crash', value: 'Detected', tone: 'alert', help: ALERT_HELP.crash_detected }
+      : { key: 'crash', icon: 'shield', label: 'Crash', value: 'None', tone: 'ok', help: 'No crash detected. The scooter watches for sudden impacts and falls.' };
+  const z = zoneLabel(device);
+  const zone: Check = {
+    key: 'zone', icon: 'zone', label: 'Zone',
+    value: z.tone === 'alert' ? 'Outside' : z.tone === 'ok' ? 'Inside' : device.geofence ? 'Unknown' : 'Not set',
+    tone: z.tone,
+    help: z.tone === 'alert'
+      ? ALERT_HELP.geofence_exit
+      : z.tone === 'ok'
+        ? 'The scooter is inside the safe zone you drew on the map.'
+        : device.geofence
+          ? 'Zone status is unknown until the scooter reports its location.'
+          : 'Draw a safe zone on the map to get an alert when the scooter leaves it.',
+  };
+  return [
+    { ...helmetChip, key: 'helmet' },
+    crash,
+    zone,
+    { ...scooterChip, key: 'scooter', label: 'Scooter', value: scooterChip.value === '—' ? 'Unknown' : scooterChip.value },
+  ];
+}
+
+export interface DayCount {
+  /** Midnight of the day, local time. */
+  start: number;
+  label: string;
+  count: number;
+  today: boolean;
+}
+
+export interface Stats {
+  days: DayCount[];
+  week: number;
+  today: number;
+  /** Most frequent alert type this week. */
+  top: SafetyEventType | null;
+  /** ISO time of the newest alert, if any. */
+  lastAlertAt: string | null;
+}
+
+/** Alert counts for the last seven days, oldest first. */
+export function stats(events: SafetyEvent[], serverNow: number): Stats {
+  const midnight = new Date(serverNow);
+  midnight.setHours(0, 0, 0, 0);
+  const days: DayCount[] = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(midnight);
+    d.setDate(d.getDate() - i);
+    days.push({
+      start: d.getTime(),
+      label: i === 0 ? 'Today' : d.toLocaleDateString(undefined, { weekday: 'short' }),
+      count: 0,
+      today: i === 0,
+    });
+  }
+  const counts = new Map<SafetyEventType, number>();
+  let lastAlertAt: string | null = null;
+  for (const e of events) {
+    if (e.severity !== 'alert') continue;
+    lastAlertAt ??= e.created_at;
+    const at = Date.parse(e.created_at);
+    for (let i = days.length - 1; i >= 0; i--) {
+      if (at >= days[i]!.start) {
+        days[i]!.count++;
+        counts.set(e.type, (counts.get(e.type) ?? 0) + 1);
+        break;
+      }
+    }
+  }
+  let top: SafetyEventType | null = null;
+  for (const [type, n] of counts) if (!top || n > counts.get(top)!) top = type;
+  const week = days.reduce((sum, d) => sum + d.count, 0);
+  return { days, week, today: days[6]!.count, top, lastAlertAt };
+}
+
+/** "Good morning" etc., by the viewer's local time. */
+export function greeting(now: number): string {
+  const h = new Date(now).getHours();
+  return h < 5 ? 'Good night' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
 }

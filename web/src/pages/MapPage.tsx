@@ -13,7 +13,7 @@ import {
 import { api } from '../api';
 import { Icon } from '../icons';
 import { MapView, type Draft } from '../MapView';
-import { location, locationLabel, visibleAlerts, zoneLabel } from '../status';
+import { displayName, location, locationLabel, visibleAlerts, zoneLabel } from '../status';
 
 const DEFAULT_RADIUS_M = 250;
 const SLIDER_MAX_M = Math.min(2000, GEOFENCE_MAX_RADIUS_M);
@@ -104,6 +104,7 @@ export function MapPage(props: { device: DeviceState; serverNow: number; onSaved
     <div className="map-page">
       <MapView
         position={position}
+        label={displayName(device)}
         stale={!live}
         alert={device.online && visibleAlerts(device).length > 0}
         zone={saved}
@@ -118,7 +119,7 @@ export function MapPage(props: { device: DeviceState; serverNow: number; onSaved
       {!draft && (
         <>
           <div className="map-top">
-            <span className="pill"><i className={`dot tone-${live ? 'ok' : 'unknown'}`} />{locationLabel(device, serverNow)}</span>
+            <span className="pill"><i className={`dot tone-${live ? 'ok' : 'unknown'} ${live ? 'dot--pulse' : ''}`} />{locationLabel(device, serverNow)}</span>
             {/* an exit is already announced by the alert strip above the map */}
             {saved && zone.tone !== 'alert' && <span className="pill"><i className={`dot tone-${zone.tone}`} />{zone.text}</span>}
           </div>

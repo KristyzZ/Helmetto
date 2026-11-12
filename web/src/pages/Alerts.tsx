@@ -3,8 +3,9 @@ import type { AlertType, DeviceState, SafetyEvent } from '@helmetto/shared';
 import { Icon } from '../icons';
 import { notifyPermission, requestNotifyPermission, type NotifyPermission } from '../notify';
 import { Sheet } from '../Sheet';
-import { ALERT_HELP, EVENT_ICON, alertLine, alertTone, title, visibleAlerts } from '../status';
+import { ALERT_HELP, EVENT_ICON, alertLine, alertTone, stats, title, visibleAlerts } from '../status';
 import { clock, dayLabel, duration } from '../time';
+import { WeekChart } from '../WeekChart';
 
 function Notifications() {
   const [permission, setPermission] = useState<NotifyPermission>(notifyPermission());
@@ -20,7 +21,7 @@ function Notifications() {
   return (
     <>
       <button className="row row--card" onClick={() => setOpen(true)}>
-        <Icon name="bell" size={20} />
+        <span className="disc disc--sm tone-accent"><Icon name="bell" size={18} /></span>
         <span className="row__text"><strong>Notifications</strong></span>
         <span className="state"><i className={`dot tone-${permission === 'granted' ? 'ok' : 'unknown'}`} />{status}</span>
         <Icon name="chevron" size={16} />
@@ -45,13 +46,16 @@ export function Alerts(props: { device: DeviceState; events: SafetyEvent[]; serv
   const { device, events, serverNow } = props;
   const [openAlert, setOpenAlert] = useState<AlertType | null>(null);
   const [openEvent, setOpenEvent] = useState<SafetyEvent | null>(null);
+  const [onlyAlerts, setOnlyAlerts] = useState(false);
   const active = visibleAlerts(device);
+  const week = stats(events, serverNow);
+  const shown = onlyAlerts ? events.filter((e) => e.severity === 'alert') : events;
 
   // an active alert started at its newest matching event
   const since = (type: AlertType) => events.find((e) => e.type === type)?.created_at ?? null;
 
   const days: { label: string; items: SafetyEvent[] }[] = [];
-  for (const event of events) {
+  for (const event of shown) {
     const label = dayLabel(event.created_at);
     const last = days[days.length - 1];
     if (last?.label === label) last.items.push(event);
@@ -65,16 +69,19 @@ export function Alerts(props: { device: DeviceState; events: SafetyEvent[]; serv
       <section>
         <h2 className="label">Active now</h2>
         {active.length === 0 ? (
-          <div className="row row--card row--static">
-            <span className="disc disc--sm tone-ok"><Icon name="check" size={18} /></span>
-            <span className="row__text"><strong>No active alerts</strong></span>
+          <div className="calm">
+            <span className="disc tone-ok"><Icon name="check" size={20} stroke={2.4} /></span>
+            <span className="row__text">
+              <strong>No active alerts</strong>
+              <small>We'll let you know the moment something needs your attention.</small>
+            </span>
           </div>
         ) : (
-          <ul className="list">
+          <ul className="alert-cards">
             {active.map((type) => (
               <li key={type}>
-                <button className="row" onClick={() => setOpenAlert(type)}>
-                  <span className={`disc disc--sm tone-${alertTone(type)}`}><Icon name={EVENT_ICON[type]} size={18} /></span>
+                <button className={`alert-card tone-${alertTone(type)}`} onClick={() => setOpenAlert(type)}>
+                  <span className="disc"><Icon name={EVENT_ICON[type]} size={20} stroke={2.2} /></span>
                   <span className="row__text">
                     <strong>{title(type)}</strong>
                     <small>{alertLine(type, device)}</small>
@@ -90,10 +97,24 @@ export function Alerts(props: { device: DeviceState; events: SafetyEvent[]; serv
 
       <Notifications />
 
+      <section className="card">
+        <header className="card__head">
+          <h2>Last 7 days</h2>
+          <span className="meta">{week.week} alert{week.week === 1 ? '' : 's'}</span>
+        </header>
+        <WeekChart stats={week} />
+      </section>
+
       <section>
-        <h2 className="label">History</h2>
-        {events.length === 0 ? (
-          <p className="empty">Nothing has happened yet.</p>
+        <div className="section-head">
+          <h2 className="label">History</h2>
+          <div className="segmented segmented--sm" role="tablist" aria-label="Filter history">
+            <button role="tab" aria-selected={!onlyAlerts} onClick={() => setOnlyAlerts(false)}>All</button>
+            <button role="tab" aria-selected={onlyAlerts} onClick={() => setOnlyAlerts(true)}>Alerts</button>
+          </div>
+        </div>
+        {shown.length === 0 ? (
+          <p className="empty">{events.length === 0 ? 'Nothing has happened yet.' : 'No alerts in the history.'}</p>
         ) : (
           days.map((day) => (
             <div key={day.label} className="day">
@@ -102,7 +123,9 @@ export function Alerts(props: { device: DeviceState; events: SafetyEvent[]; serv
                 {day.items.map((event) => (
                   <li key={event.id}>
                     <button className="row row--slim" onClick={() => setOpenEvent(event)}>
-                      <i className={`dot tone-${event.severity === 'alert' ? 'alert' : 'ok'}`} />
+                      <span className={`disc disc--xs tone-${event.severity === 'alert' ? 'alert' : 'ok'}`}>
+                        <Icon name={EVENT_ICON[event.type]} size={14} stroke={2.2} />
+                      </span>
                       <span className="row__text"><span>{title(event.type)}</span></span>
                       <time dateTime={event.created_at}>{clock(event.created_at)}</time>
                     </button>

@@ -59,7 +59,8 @@ export function Devices(props: {
   return (
     <div className="page">
       <h1 className="page__title">Scooters</h1>
-      <ul className="list">
+      <p className="page__sub">Tap a scooter to follow it on Home.</p>
+      <ul className="device-list">
         {props.devices.map((device) => {
           const alerts = visibleAlerts(device);
           const tone = !hasReported(device) ? 'unknown' : !device.online ? 'warn' : alerts.length ? 'alert' : 'ok';
@@ -71,15 +72,17 @@ export function Devices(props: {
                 ? `${alerts.length} active alert${alerts.length > 1 ? 's' : ''}`
                 : 'Online';
           return (
-            <li key={device.device_id} className="device">
+            <li key={device.device_id} className={`device ${device.device_id === props.selectedId && props.devices.length > 1 ? 'device--selected' : ''}`}>
               <button className="row" onClick={() => props.onSelect(device.device_id)} aria-pressed={device.device_id === props.selectedId}>
-                <span className="avatar">{displayName(device).charAt(0).toUpperCase()}</span>
+                <span className={`avatar avatar--ring tone-${tone}`}>{displayName(device).charAt(0).toUpperCase()}</span>
                 <span className="row__text">
                   <strong>{displayName(device)}</strong>
                   <small>{childName(device) ? device.name : `ID ${device.device_id}`}</small>
-                  <span className="state"><i className={`dot tone-${tone}`} />{state}</span>
+                  <span className={`badge-pill tone-${tone}`}><i className={`dot tone-${tone}`} />{state}</span>
                 </span>
-                {device.device_id === props.selectedId && props.devices.length > 1 && <Icon name="check" size={18} />}
+                {device.telemetry?.battery_percent != null && (
+                  <span className="device__battery"><Icon name="battery" size={16} />{Math.round(device.telemetry.battery_percent)}%</span>
+                )}
               </button>
               <button className="icon-button" onClick={() => setEditing(device.device_id)} aria-label={`Edit ${displayName(device)}`}>
                 <Icon name="edit" size={18} />
