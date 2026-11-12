@@ -11,6 +11,7 @@ import {
 import {
   EVENT_INFO,
   type DeviceState,
+  type DeviceUpdate,
   type Geofence,
   type SafetyEvent,
   type SafetyEventType,
@@ -18,17 +19,18 @@ import {
 } from '@helmetto/shared';
 import type { DeviceRow, Store } from './db';
 
-const MESSAGES: Record<SafetyEventType, (name: string) => string> = {
-  helmet_disconnected: (n) => `${n}: the helmet is out of range or switched off while the scooter is on.`,
-  helmet_reconnected: (n) => `${n}: the helmet is connected again.`,
-  helmet_not_worn: (n) => `${n}: the helmet is nearby but not being worn.`,
-  helmet_worn: (n) => `${n}: the helmet is being worn again.`,
-  crash_detected: (n) => `${n}: the scooter reported a crash. Check on the rider now.`,
-  crash_cleared: (n) => `${n}: the scooter no longer reports a crash.`,
-  geofence_exit: (n) => `${n} left the safe zone.`,
-  geofence_enter: (n) => `${n} is back inside the safe zone.`,
-  scooter_offline: (n) => `${n} stopped sending data. Helmet and location status are unknown until it reconnects.`,
-  scooter_online: (n) => `${n} is sending data again.`,
+/** One short line per event. `who` is the child's name, or the scooter's when no child name is set. */
+const MESSAGES: Record<SafetyEventType, (who: string) => string> = {
+  helmet_disconnected: (w) => `${w}'s helmet is out of range or switched off.`,
+  helmet_reconnected: (w) => `${w}'s helmet is connected again.`,
+  helmet_not_worn: (w) => `${w}'s helmet is nearby but not being worn.`,
+  helmet_worn: (w) => `${w}'s helmet is back on.`,
+  crash_detected: (w) => `${w}'s scooter reported a crash.`,
+  crash_cleared: (w) => `${w}'s scooter no longer reports a crash.`,
+  geofence_exit: (w) => `${w} left the safe zone.`,
+  geofence_enter: (w) => `${w} is back in the safe zone.`,
+  scooter_offline: (w) => `${w}'s scooter stopped sending data.`,
+  scooter_online: (w) => `${w}'s scooter is sending data again.`,
 };
 
 /**
@@ -53,6 +55,7 @@ export class SafetyService extends EventEmitter {
     return {
       device_id: device.id,
       name: device.name,
+      child_name: device.childName,
       online: device.lastSeenAt !== null && !device.conditions.scooter_offline,
       last_seen_at: device.lastSeenAt === null ? null : new Date(device.lastSeenAt).toISOString(),
       telemetry: t,
@@ -85,7 +88,7 @@ export class SafetyService extends EventEmitter {
           device_id: device.id,
           type,
           severity: EVENT_INFO[type].severity,
-          message: MESSAGES[type](device.name),
+          message: MESSAGES[type](device.childName ?? device.name),
           created_at: at,
           latitude: device.lastLocation?.latitude ?? null,
           longitude: device.lastLocation?.longitude ?? null,
@@ -124,6 +127,18 @@ export class SafetyService extends EventEmitter {
     device.geofence = geofence;
     this.commit(device, evaluation, this.now());
     return this.toState(device);
+  }
+
+  /** Rename the scooter or set the child's name. */
+  updateDevice(deviceId: string, update: DeviceUpdate): DeviceState | null {
+    const device = this.store.getDevice(deviceId);
+    if (!device) return null;
+    if (update.name !== undefined) device.name = update.name;
+    if (update.child_name !== undefined) device.childName = update.child_name;
+    this.store.saveDevice(device);
+    const state = this.toState(device);
+    this.emit('state', state);
+    return state;
   }
 
   /** Mark scooters that went silent as offline. Called on a timer. */

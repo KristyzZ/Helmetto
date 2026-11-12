@@ -8,7 +8,7 @@ export interface Config {
   port: number;
   databasePath: string;
   /** Demo device seeded on startup. */
-  device: { id: string; apiKey: string; name: string };
+  device: { id: string; apiKey: string; name: string; childName: string | null };
   demoMode: boolean;
   offlineTimeoutMs: number;
   webDist: string;
@@ -41,6 +41,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       id: env.DEVICE_ID || DEV_DEVICE_ID,
       apiKey: env.DEVICE_API_KEY || DEV_DEVICE_API_KEY,
       name: env.DEVICE_NAME || 'Demo scooter',
+      // Used only when the device has no child name yet; the parent can change it in the app.
+      childName: env.DEVICE_CHILD_NAME || (production ? null : 'Emma'),
     },
     demoMode: env.DEMO_MODE ? env.DEMO_MODE === 'true' : !production,
     offlineTimeoutMs: Number(env.OFFLINE_TIMEOUT_MS) || OFFLINE_TIMEOUT_MS,

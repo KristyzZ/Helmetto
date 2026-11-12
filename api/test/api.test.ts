@@ -9,7 +9,7 @@ import { SafetyService } from '../src/service';
 const config: Config = {
   port: 0,
   databasePath: ':memory:',
-  device: { id: 'test-scooter', apiKey: 'test-key', name: 'Test scooter' },
+  device: { id: 'test-scooter', apiKey: 'test-key', name: 'Test scooter', childName: null },
   demoMode: false,
   offlineTimeoutMs: 30_000,
   webDist: '/nonexistent',
@@ -159,6 +159,107 @@ describe('alerts fire on transitions only', () => {
   it('lists devices', async () => {
     const { devices } = (await (await fetch(`${base}/api/devices`)).json()) as DevicesResponse;
     expect(devices.map((d) => d.device_id)).toEqual(['test-scooter']);
+  });
+});
+
+describe('polygon safe zone', () => {
+  // ~220 m x ~130 m rectangle around 54.6872, 25.2797
+  const points = [
+    { lat: 54.6862, lon: 25.2787 },
+    { lat: 54.6862, lon: 25.2807 },
+    { lat: 54.6882, lon: 25.2807 },
+    { lat: 54.6882, lon: 25.2787 },
+  ];
+  const put = (body: unknown) =>
+    fetch(`${base}/api/devices/test-scooter/geofence`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+  it('rejects too few or too many points, bad coordinates, crossing lines and tiny shapes', async () => {
+    const two = await put({ shape: 'polygon', points: points.slice(0, 2) });
+    expect(two.status).toBe(400);
+    expect(((await two.json()) as { message: string }).message).toContain('at least 3');
+
+    const many = Array.from({ length: 51 }, (_, i) => ({ lat: 54.68 + i * 0.0001, lon: 25.27 + (i % 2) * 0.001 }));
+    expect((await put({ shape: 'polygon', points: many })).status).toBe(400);
+
+    expect((await put({ shape: 'polygon', points: [...points.slice(0, 3), { lat: 91, lon: 25 }] })).status).toBe(400);
+    expect((await put({ shape: 'polygon', points: [...points.slice(0, 3), { lat: '54', lon: 25 }] })).status).toBe(400);
+
+    const bowTie = await put({ shape: 'polygon', points: [points[0], points[2], points[1], points[3]] });
+    expect(bowTie.status).toBe(400);
+    expect(((await bowTie.json()) as { message: string }).message).toContain('crosses itself');
+
+    const tiny = points.map((p) => ({ lat: 54.6872 + (p.lat - 54.6872) / 100, lon: 25.2797 + (p.lon - 25.2797) / 100 }));
+    expect((await put({ shape: 'polygon', points: tiny })).status).toBe(400);
+  });
+
+  it('stores the polygon and fills the circle fields with an enclosing circle', async () => {
+    const res = await put({ shape: 'polygon', points });
+    expect(res.status).toBe(200);
+    const { geofence } = (await res.json()) as DeviceState;
+    expect(geofence?.shape).toBe('polygon');
+    expect(geofence?.points).toEqual(points);
+    expect(geofence?.latitude).toBeCloseTo(54.6872, 4);
+    expect(geofence?.longitude).toBeCloseTo(25.2797, 4);
+    expect(geofence?.radius_m).toBeGreaterThan(100);
+    expect((await state()).geofence).toEqual(geofence);
+  });
+
+  it('exit and enter fire once each, and the corner outside the shape counts as outside', async () => {
+    const before = (await alertTypes()).length;
+    await post(reading({ latitude: 54.6872, longitude: 25.2797 }));
+    expect((await state()).zone_status).toBe('inside');
+    // inside the enclosing circle but outside the rectangle
+    for (let i = 0; i < 3; i++) await post(reading({ latitude: 54.6872, longitude: 25.2812 }));
+    expect((await state()).active_alerts).toEqual(['geofence_exit']);
+    await post(reading({ latitude: null, longitude: null }));
+    expect((await state()).active_alerts).toEqual(['geofence_exit']);
+    for (let i = 0; i < 2; i++) await post(reading({ latitude: 54.6872, longitude: 25.2797 }));
+    expect((await alertTypes()).slice(before)).toEqual(['geofence_exit', 'geofence_enter']);
+  });
+
+  it('old circle bodies still work and replace the polygon', async () => {
+    const res = await put({ latitude: 54.6872, longitude: 25.2797, radius_m: 200 });
+    expect(res.status).toBe(200);
+    const { geofence } = (await res.json()) as DeviceState;
+    expect(geofence).toEqual({ latitude: 54.6872, longitude: 25.2797, radius_m: 200, shape: 'circle' });
+    expect((await put({ shape: 'circle', latitude: 54.6872, longitude: 25.2797, radius_m: 200 })).status).toBe(200);
+    const bad = await put({ latitude: 54.6872, longitude: 25.2797, radius_m: 1 });
+    expect(bad.status).toBe(400);
+    expect(((await bad.json()) as { message: string }).message).toContain('radius_m');
+  });
+});
+
+describe('device names', () => {
+  const patch = (body: unknown) =>
+    fetch(`${base}/api/devices/test-scooter`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+  it('sets the child name and uses it in alert messages', async () => {
+    expect((await state()).child_name).toBeNull();
+    const res = await patch({ child_name: '  Emma ' });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as DeviceState).child_name).toBe('Emma');
+    await post(reading({ helmet_connected: false }));
+    await post(reading());
+    const { alerts } = (await (await fetch(`${base}/api/devices/test-scooter/alerts?limit=2`)).json()) as AlertsResponse;
+    expect(alerts[1]?.message).toBe("Emma's helmet is out of range or switched off.");
+  });
+
+  it('renames the scooter, clears the child name, rejects empty updates', async () => {
+    expect(((await (await patch({ name: 'Blue scooter', child_name: null })).json()) as DeviceState)).toMatchObject({
+      name: 'Blue scooter',
+      child_name: null,
+    });
+    expect((await patch({})).status).toBe(400);
+    expect((await patch({ name: '' })).status).toBe(400);
+    expect((await patch({ name: 'x'.repeat(41) })).status).toBe(400);
   });
 });
 

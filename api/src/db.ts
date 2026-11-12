@@ -41,6 +41,12 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS events_by_device ON events(device_id, id DESC);
 `;
 
+/** Columns added after the first release; applied to existing databases on start. */
+const ADDED_COLUMNS: Record<string, string> = {
+  child_name: 'TEXT',
+  geofence_points: 'TEXT', // JSON [{lat, lon}], set for polygon zones only
+};
+
 export const hashKey = (key: string) => createHash('sha256').update(key).digest('hex');
 
 /** One device as stored. Times are epoch milliseconds. */
@@ -48,6 +54,7 @@ export interface DeviceRow {
   id: string;
   parentId: string;
   name: string;
+  childName: string | null;
   lastSeenAt: number | null;
   telemetry: Telemetry | null;
   conditions: Conditions;
@@ -62,6 +69,7 @@ function toDevice(raw: Raw): DeviceRow {
     id: raw.id,
     parentId: raw.parent_id,
     name: raw.name,
+    childName: raw.child_name ?? null,
     lastSeenAt: raw.last_seen_at ?? null,
     telemetry: raw.telemetry ? JSON.parse(raw.telemetry) : null,
     conditions: raw.conditions ? { ...NO_CONDITIONS, ...JSON.parse(raw.conditions) } : { ...NO_CONDITIONS },
@@ -71,7 +79,14 @@ function toDevice(raw: Raw): DeviceRow {
         : null,
     geofence:
       raw.geofence_lat != null
-        ? { latitude: raw.geofence_lat, longitude: raw.geofence_lon, radius_m: raw.geofence_radius_m }
+        ? {
+            latitude: raw.geofence_lat,
+            longitude: raw.geofence_lon,
+            radius_m: raw.geofence_radius_m,
+            ...(raw.geofence_points
+              ? { shape: 'polygon' as const, points: JSON.parse(raw.geofence_points) }
+              : { shape: 'circle' as const }),
+          }
         : null,
   };
 }
@@ -98,19 +113,31 @@ export class Store {
     this.db = new DatabaseSync(filename);
     this.db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
     this.db.exec(SCHEMA);
+    const existing = new Set((this.db.prepare('PRAGMA table_info(devices)').all() as Raw[]).map((c) => c.name));
+    for (const [column, type] of Object.entries(ADDED_COLUMNS)) {
+      if (!existing.has(column)) this.db.exec(`ALTER TABLE devices ADD COLUMN ${column} ${type}`);
+    }
     this.db
       .prepare('INSERT OR IGNORE INTO parents (id, name) VALUES (?, ?)')
       .run(DEMO_PARENT_ID, 'Demo parent');
   }
 
-  /** Create the device or refresh its key/name from env. Only the key hash is stored. */
-  seedDevice(device: { id: string; apiKey: string; name: string }, parentId = DEMO_PARENT_ID): void {
+  /**
+   * Create the device, or refresh its key from env. Only the key hash is stored.
+   * Names are set when the device is created; after that the parent's edits win.
+   */
+  seedDevice(
+    device: { id: string; apiKey: string; name: string; childName?: string | null },
+    parentId = DEMO_PARENT_ID,
+  ): void {
     this.db
       .prepare(
-        `INSERT INTO devices (id, parent_id, name, api_key_hash, created_at) VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET api_key_hash = excluded.api_key_hash, name = excluded.name`,
+        `INSERT INTO devices (id, parent_id, name, child_name, api_key_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           api_key_hash = excluded.api_key_hash,
+           child_name = COALESCE(devices.child_name, excluded.child_name)`,
       )
-      .run(device.id, parentId, device.name, hashKey(device.apiKey), Date.now());
+      .run(device.id, parentId, device.name, device.childName ?? null, hashKey(device.apiKey), Date.now());
   }
 
   verifyDeviceKey(deviceId: string, key: string): 'ok' | 'unknown_device' | 'bad_key' {
@@ -136,12 +163,14 @@ export class Store {
   saveDevice(device: DeviceRow): void {
     this.db
       .prepare(
-        `UPDATE devices SET last_seen_at = ?, telemetry = ?, conditions = ?,
+        `UPDATE devices SET name = ?, child_name = ?, last_seen_at = ?, telemetry = ?, conditions = ?,
            last_lat = ?, last_lon = ?, last_location_at = ?,
-           geofence_lat = ?, geofence_lon = ?, geofence_radius_m = ?
+           geofence_lat = ?, geofence_lon = ?, geofence_radius_m = ?, geofence_points = ?
          WHERE id = ?`,
       )
       .run(
+        device.name,
+        device.childName,
         device.lastSeenAt,
         device.telemetry ? JSON.stringify(device.telemetry) : null,
         JSON.stringify(device.conditions),
@@ -151,6 +180,7 @@ export class Store {
         device.geofence?.latitude ?? null,
         device.geofence?.longitude ?? null,
         device.geofence?.radius_m ?? null,
+        device.geofence?.shape === 'polygon' ? JSON.stringify(device.geofence.points) : null,
         device.id,
       );
   }

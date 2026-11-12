@@ -15,7 +15,7 @@ import type { Config } from './config';
 import type { Store } from './db';
 import type { DemoRunner } from './demo';
 import type { SafetyService } from './service';
-import { geofenceSchema, telemetrySchema, validationError } from './validation';
+import { deviceUpdateSchema, geofenceSchema, telemetrySchema, validationError } from './validation';
 
 const SSE_KEEPALIVE_MS = 15_000;
 
@@ -65,6 +65,14 @@ export function createApp(deps: {
 
   app.get(ROUTE_PATTERNS.deviceState, (req, res) => {
     const state = service.getState(String(req.params.deviceId));
+    if (!state) return fail(res, 404, 'unknown_device', 'No such device');
+    res.json(state);
+  });
+
+  app.patch(ROUTE_PATTERNS.device, (req, res) => {
+    const parsed = deviceUpdateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json(validationError(parsed.error));
+    const state = service.updateDevice(String(req.params.deviceId), parsed.data);
     if (!state) return fail(res, 404, 'unknown_device', 'No such device');
     res.json(state);
   });
