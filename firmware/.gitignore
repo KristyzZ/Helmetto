@@ -1,5 +1,6 @@
 # Local Arduino credentials
 wifi_config.h
+telemetry_config.h
 secrets.h
 
 # Compiled firmware

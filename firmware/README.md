@@ -36,4 +36,13 @@ Atjunk paspirtuko ESP8266 maitinimą prieš jungdamas laidus.
 
 Paspirtukui užfiksavus bendrą pagreitį nuo 2,5 g, Serial Monitor rodo `IMPACT` ir išmatuotą pagreitį. Tai bandomasis slenkstis. Akselerometro diapazonas yra ±8 g, o Z ašiai taikoma su šiuo moduliu išmatuota +0,11 g korekcija.
 
-Būsima integracija siųs paspirtuko telemetriją per HTTP į komandos kuriamą API. Dabartiniame variante šalmo būsena ir MPU6050 matavimai rodomi per Serial Monitor.
+## Programėlės telemetrija
+
+1. Paleisk komandos API pagal [projekto README](../README.md). Vietiniam bandymui naudok kompiuterio LAN IP adresą, pasiekiamą iš paspirtuko 2,4 GHz tinklo. Pavyzdžiui, `http://192.168.1.20:3000/api/devices/scooter-001/telemetry`.
+2. Nukopijuok `scooter_esp/telemetry_config.example.h` į `scooter_esp/telemetry_config.h`. Įrašyk visą telemetrijos URL į `TELEMETRY_URL` ir API nustatytą įrenginio raktą į `TELEMETRY_DEVICE_KEY`. Įrenginio ID URL turi sutapti su serverio `DEVICE_ID`. Vietinį failą ignoruoja „Git“.
+3. HTTP naudok vietiniame bandomajame tinkle. Diegimui naudok HTTPS ir į `TELEMETRY_CA_PEM` įrašyk serverio patikimos šakninės CA PEM sertifikatą (galima naudoti C++ `R"PEM(...)PEM"` eilutę). ESP8266 prieš HTTPS sinchronizuoja laiką.
+4. Iš naujo įkelk sketch’ą. Programėlėje patikrink įrenginio būseną ir pranešimus. Jei Serial Monitor rodo 401, patikrink raktą. Jei rodo 404, patikrink URL ir įrenginio ID.
+
+Paspirtukas kas 5 s siunčia POST su `helmet_connected` ir `crash_detected`. Vietinis 3 s perspėjimas išlieka. Programėlėje šalmas laikomas prisijungusiu iki 15 s nuo paskutinio signalo. Smūgis išlaikomas iki sėkmingo API atsakymo, o kitas siuntimas be naujo smūgio išvalo aktyvų perspėjimą. Iki vieno sėkmingo siuntimo keli smūgiai sujungiami į vieną signalą. GPS, greitis, baterija ir šalmo dėvėjimas programėlėje lieka nežinomi.
+
+ESP8266 HTTP užklausa vykdoma sinchroniškai, todėl jos metu MPU6050 nuskaitymas trumpam pristabdomas. [API kontraktas](../shared/PROTOCOL.md)
