@@ -66,7 +66,7 @@ describe('telemetry auth and validation', () => {
   it('rejects bad payloads with a clear 400', async () => {
     const missing = await post({ helmet_worn: null });
     expect(missing.status).toBe(400);
-    const body = await missing.json();
+    const body = (await missing.json()) as { error: string; message: string };
     expect(body.error).toBe('invalid_payload');
     expect(body.message).toContain('helmet_connected');
 
