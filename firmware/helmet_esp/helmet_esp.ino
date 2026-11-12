@@ -27,6 +27,8 @@ void setup() {
     return;
   }
 
+  WiFi.setOutputPower(5.0f);
+
   if (esp_now_init() != 0) {
     Serial.println("ESP-NOW init failed!");
     return;
