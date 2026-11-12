@@ -1,4 +1,7 @@
 #include <ESP8266WiFi.h>
+#include <ESP8266HTTPClient.h>
+#include <WiFiClientSecureBearSSL.h>
+#include <time.h>
 #include <Wire.h>
 #include <espnow.h>
 
@@ -12,7 +15,17 @@ extern "C" {
 #include "wifi_config.example.h"
 #endif
 
-constexpr uint8_t WIFI_CHANNEL = 6;
+#if __has_include("telemetry_config.h")
+#include "telemetry_config.h"
+#else
+#include "telemetry_config.example.h"
+#endif
+
+constexpr uint32_t WIFI_RETRY_INTERVAL_MS = 15000;
+constexpr uint32_t TELEMETRY_INTERVAL_MS = 5000;
+constexpr uint16_t TELEMETRY_TIMEOUT_MS = 2000;
+constexpr time_t MIN_TLS_TIME = 1704067200;  // 2024-01-01 UTC
+constexpr uint8_t WIFI_CHANNEL = 11;
 constexpr uint8_t MPU_ADDRESS = 0x68;
 constexpr uint8_t MPU_POWER_MANAGEMENT = 0x6B;
 constexpr uint8_t MPU_ACCEL_CONFIG = 0x1C;
@@ -30,6 +43,9 @@ constexpr uint32_t IMPACT_COOLDOWN_MS = 1000;
 volatile uint32_t lastSignal = 0;
 volatile bool heartbeatReceived = false;
 bool mpuReady = false;
+bool impactPending = false;
+WiFiEventHandler wifiDisconnectHandler;
+uint32_t lastWifiAttempt = 0;
 
 enum HelmetState {
   NOT_FOUND,
@@ -133,6 +149,7 @@ void readMpu(uint32_t now) {
       (!impactReported || now - lastImpact >= IMPACT_COOLDOWN_MS)) {
     lastImpact = now;
     impactReported = true;
+    impactPending = true;
     Serial.printf("IMPACT: %.2f g\n", sqrtf(accelerationSquared));
   }
   wasAboveThreshold = aboveThreshold;
@@ -145,6 +162,58 @@ void readMpu(uint32_t now) {
                 ax, ay, az, gx, gy, gz);
 }
 
+int postTelemetry(WiFiClient &client, const String &body) {
+  HTTPClient http;
+  if (!http.begin(client, TELEMETRY_URL)) return -1;
+
+  http.setTimeout(TELEMETRY_TIMEOUT_MS);
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("X-Device-Key", TELEMETRY_DEVICE_KEY);
+  const int status = http.POST(body);
+  http.end();
+  return status;
+}
+
+void updateTelemetry(uint32_t now, bool wifiConnected) {
+  if (!wifiConnected || TELEMETRY_URL[0] == '\0' || TELEMETRY_DEVICE_KEY[0] == '\0') return;
+
+  static uint32_t lastAttempt = 0;
+  if (now - lastAttempt < TELEMETRY_INTERVAL_MS) return;
+  lastAttempt = now;
+
+  const bool helmetConnected = helmetState == CONNECTED || helmetState == WAITING;
+  const char *crashDetected = !mpuReady ? "null" : impactPending ? "true" : "false";
+  String body = String("{\"helmet_connected\":") + (helmetConnected ? "true" : "false") +
+                ",\"crash_detected\":" + crashDetected + "}";
+
+  int status;
+  if (strncmp(TELEMETRY_URL, "https://", 8) == 0) {
+    if (TELEMETRY_CA_PEM[0] == '\0' || time(nullptr) < MIN_TLS_TIME) {
+      Serial.println("Telemetry HTTPS needs a CA certificate and synchronized time");
+      return;
+    }
+    static BearSSL::X509List trustAnchor(TELEMETRY_CA_PEM);
+    static BearSSL::Session session;
+    BearSSL::WiFiClientSecure client;
+    client.setTrustAnchors(&trustAnchor);
+    client.setSession(&session);
+    status = postTelemetry(client, body);
+  } else if (strncmp(TELEMETRY_URL, "http://", 7) == 0) {
+    WiFiClient client;
+    status = postTelemetry(client, body);
+  } else {
+    Serial.println("Telemetry URL must start with http:// or https://");
+    return;
+  }
+
+  if (status == HTTP_CODE_OK) {
+    if (impactPending) Serial.println("Telemetry sent: impact");
+    impactPending = false;
+  } else {
+    Serial.printf("Telemetry POST failed: %d\n", status);
+  }
+}
+
 void setup() {
   Serial.begin(115200);
   initMpu();
@@ -152,6 +221,12 @@ void setup() {
   WiFi.persistent(false);
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
+  WiFi.setSleepMode(WIFI_NONE_SLEEP);
+  WiFi.setAutoReconnect(true);
+  wifiDisconnectHandler = WiFi.onStationModeDisconnected(
+      [](const WiFiEventStationModeDisconnected &event) {
+        Serial.printf("Wi-Fi link lost (reason %u)\n", static_cast<unsigned>(event.reason));
+      });
   wifi_set_channel(WIFI_CHANNEL);
   Serial.print("Scooter STA MAC: ");
   Serial.println(WiFi.macAddress());
@@ -167,6 +242,7 @@ void setup() {
   }
 
   if (WIFI_SSID[0] != '\0') {
+    lastWifiAttempt = millis();
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD, WIFI_CHANNEL);
     Serial.println("Connecting to Wi-Fi...");
   } else {
@@ -180,23 +256,34 @@ void loop() {
   if (wifiConnected != wifiWasConnected) {
     wifiWasConnected = wifiConnected;
     if (wifiConnected) {
-      Serial.printf("Wi-Fi connected on channel %d\n", WiFi.channel());
+      if (strncmp(TELEMETRY_URL, "https://", 8) == 0) {
+        configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+      }
+      Serial.printf("Wi-Fi connected on channel %d | RSSI: %d dBm | IP: %s\n",
+                    WiFi.channel(), WiFi.RSSI(), WiFi.localIP().toString().c_str());
       if (WiFi.channel() != WIFI_CHANNEL) {
-        Serial.println("ESP-NOW channel mismatch: set the 2.4 GHz access point to channel 6");
+        Serial.printf("ESP-NOW channel mismatch: helmet expects channel %u\n", WIFI_CHANNEL);
       }
     } else {
-      Serial.println("Wi-Fi disconnected");
+      lastWifiAttempt = millis();
     }
   }
 
   updateHelmet();
 
-  static uint32_t lastMpuRead = 0;
   const uint32_t now = millis();
+  if (!wifiConnected && WIFI_SSID[0] != '\0' && now - lastWifiAttempt >= WIFI_RETRY_INTERVAL_MS) {
+    lastWifiAttempt = now;
+    Serial.printf("Wi-Fi reconnect attempt (status %d)\n", WiFi.status());
+    WiFi.reconnect();
+  }
+
+  static uint32_t lastMpuRead = 0;
   if (now - lastMpuRead >= MPU_READ_INTERVAL_MS) {
     lastMpuRead = now;
     readMpu(now);
   }
 
+  updateTelemetry(now, wifiConnected);
   delay(1);
 }

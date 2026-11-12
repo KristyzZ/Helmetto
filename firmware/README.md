@@ -1,6 +1,6 @@
 # Helmetto ESP8266
 
-Šalmo ESP8266 kas sekundę siunčia vieno baito heartbeat (`0x01`) per ESP-NOW į paspirtuko STA MAC `68:C6:3A:A0:59:45`. Abu įrenginiai naudoja 2,4 GHz 6 kanalą. Paspirtukas seka šalmo ryšį ir maždaug kas 10 ms nuskaito Joy-IT SEN-MPU6050 pagreitį ir giroskopą. Matavimai į Serial Monitor išvedami kas 500 ms.
+Šalmo ESP8266 kas sekundę siunčia vieno baito heartbeat (`0x01`) per ESP-NOW į paspirtuko STA MAC `68:C6:3A:A0:59:45`. Abu įrenginiai naudoja 2,4 GHz 11 kanalą. Paspirtukas seka šalmo ryšį ir maždaug kas 10 ms nuskaito Joy-IT SEN-MPU6050 pagreitį ir giroskopą. Matavimai į Serial Monitor išvedami kas 500 ms.
 
 | Arduino sketch'as | Įrenginys |
 | --- | --- |
@@ -24,7 +24,7 @@ Atjunk paspirtuko ESP8266 maitinimą prieš jungdamas laidus.
 
 1. Pridėk `https://arduino.esp8266.com/stable/package_esp8266com_index.json` prie **Additional Boards Manager URLs**. Per **Boards Manager** įdiek **esp8266 by ESP8266 Community**. `Wire`, `ESP8266WiFi` ir `espnow.h` pateikiami kartu su paketu.
 2. Paspirtuko aplanke nukopijuok `wifi_config.example.h` į `wifi_config.h` ir įrašyk vietinio tinklo duomenis. `wifi_config.h` ignoruojamas „Git“. Be šio failo sketch'as paleidžiamas ESP-NOW bandymui be prisijungimo prie Wi-Fi tinklo.
-3. Prieigos taške nustatyk 2,4 GHz 6 kanalą. Prisijungęs paspirtukas naudoja prieigos taško kanalą, todėl jis turi sutapti su šalmo kanalu. Serial Monitor rodo faktinį kanalą po prisijungimo.
+3. Prisijungęs paspirtukas naudoja 2,4 GHz prieigos taško kanalą. Serial Monitor rodo faktinį kanalą po prisijungimo. Jei tinklas naudoja kitą kanalą nei 11, pakeisk WIFI_CHANNEL abiejuose sketch’uose ir įkelk juos iš naujo.
 4. Kiekvienam įrenginiui atidaryk atitinkamą `.ino`, pasirink plokštę ir USB prievadą, tada spausk **Upload**. NodeMCU plokštei rinkis **NodeMCU 1.0 (ESP-12E Module)**. Atskirą ESP8266 modulį programuojant per adapterį rinkis **Generic ESP8266 Module** ir naudok 3,3 V logikos lygius.
 5. Paspirtuko **Serial Monitor** nustatyk **115200 baud**. Jei paspirtuko STA MAC skiriasi nuo aukščiau nurodyto adreso, pakeisk `receiverMac` šalmo sketch'e ir įkelk jį iš naujo.
 
@@ -36,4 +36,13 @@ Atjunk paspirtuko ESP8266 maitinimą prieš jungdamas laidus.
 
 Paspirtukui užfiksavus bendrą pagreitį nuo 2,5 g, Serial Monitor rodo `IMPACT` ir išmatuotą pagreitį. Tai bandomasis slenkstis. Akselerometro diapazonas yra ±8 g, o Z ašiai taikoma su šiuo moduliu išmatuota +0,11 g korekcija.
 
-Būsima integracija siųs paspirtuko telemetriją per HTTP į komandos kuriamą API. Dabartiniame variante šalmo būsena ir MPU6050 matavimai rodomi per Serial Monitor.
+## Programėlės telemetrija
+
+1. Paleisk komandos API pagal [projekto README](../README.md). Vietiniam bandymui naudok kompiuterio LAN IP adresą, pasiekiamą iš paspirtuko 2,4 GHz tinklo. Pavyzdžiui, `http://192.168.1.20:3000/api/devices/scooter-001/telemetry`.
+2. Nukopijuok `scooter_esp/telemetry_config.example.h` į `scooter_esp/telemetry_config.h`. Įrašyk visą telemetrijos URL į `TELEMETRY_URL` ir API nustatytą įrenginio raktą į `TELEMETRY_DEVICE_KEY`. Įrenginio ID URL turi sutapti su serverio `DEVICE_ID`. Vietinį failą ignoruoja „Git“.
+3. HTTP naudok vietiniame bandomajame tinkle. Diegimui naudok HTTPS ir į `TELEMETRY_CA_PEM` įrašyk serverio patikimos šakninės CA PEM sertifikatą (galima naudoti C++ `R"PEM(...)PEM"` eilutę). ESP8266 prieš HTTPS sinchronizuoja laiką.
+4. Iš naujo įkelk sketch’ą. Programėlėje patikrink įrenginio būseną ir pranešimus. Jei Serial Monitor rodo 401, patikrink raktą. Jei rodo 404, patikrink URL ir įrenginio ID.
+
+Paspirtukas kas 5 s siunčia POST su `helmet_connected` ir `crash_detected`. Vietinis 3 s perspėjimas išlieka. Programėlėje šalmas laikomas prisijungusiu iki 15 s nuo paskutinio signalo. Smūgis išlaikomas iki sėkmingo API atsakymo, o kitas siuntimas be naujo smūgio išvalo aktyvų perspėjimą. Iki vieno sėkmingo siuntimo keli smūgiai sujungiami į vieną signalą. GPS, greitis, baterija ir šalmo dėvėjimas programėlėje lieka nežinomi.
+
+ESP8266 HTTP užklausa vykdoma sinchroniškai, todėl jos metu MPU6050 nuskaitymas trumpam pristabdomas. [API kontraktas](../shared/PROTOCOL.md)
