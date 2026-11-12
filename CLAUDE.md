@@ -29,6 +29,13 @@ If more than one Claude session runs on the same machine, each one works in its 
 `git worktree add ../<repo>-<task> -b <name>/<task>`
 
 ## Project basics
-- Stack: <fill in>
-- Run locally: <fill in>
+- Stack: npm workspaces, TypeScript everywhere, Node 22.13+.
+  - `web/`: Vite + React, Leaflet + OpenStreetMap, PWA.
+  - `api/`: Express 5, SQLite via built-in `node:sqlite`, zod, Server-Sent Events. Serves `web/dist` in production.
+  - `ai/`: pure safety rules, tested with vitest. The API calls these; keep them free of I/O.
+  - `shared/`: types, route constants, `PROTOCOL.md` (the hardware contract).
+  - `scripts/`: `simulate.ts` mock scooter; `scripts/lib/simulator.ts` is also used by the API's demo endpoint.
+- Run locally: `npm install`, then `npm run dev` (api on :3000, web on :5173). Mock scooter: `npm run simulate`.
+- Checks before merging: `npm test` and `npm run typecheck`.
+- Deploy: one Node service on Render/Railway, see `infra/DEPLOY.md`.
 - Env vars: listed in `.env.example` (no real values)
