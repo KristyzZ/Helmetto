@@ -1,0 +1,380 @@
+# Helmetto protocol
+
+The contract between the scooter hardware, the API and the parent app.
+Any chip (today's ESP8266, later ESP32-C3 / nRF52 behind a gateway) only has to
+follow the **Telemetry** section. Nothing else in the system knows what chip it is.
+
+**Stability rule:** changes are additive only. New optional fields and new
+endpoints may appear; nothing here is renamed or removed. Devices must ignore
+response fields they don't know, and the server ignores request fields it
+doesn't know.
+
+- Base URL (local): `http://localhost:3000`
+- Base URL (deployed): `https://<your-app>.onrender.com` (HTTPS only)
+- All bodies are JSON, `snake_case`, UTF-8. Times are ISO 8601 UTC.
+- TypeScript types for everything below: `shared/src/types.ts`.
+
+---
+
+## 1. Telemetry (hardware → server)
+
+```
+POST /api/devices/:deviceId/telemetry
+Content-Type: application/json
+X-Device-Key: <device api key>
+```
+
+Send one reading about every **5 seconds** while the scooter is on.
+
+```json
+{
+  "helmet_connected": true,
+  "helmet_worn": null,
+  "latitude": null,
+  "longitude": null,
+  "speed_kmh": null,
+  "battery_percent": null,
+  "crash_detected": false
+}
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `helmet_connected` | boolean, **required** | `true` if the scooter heard a helmet heartbeat in the last 15 s, else `false`. |
+| `helmet_worn` | boolean \| null | Wearing sensor. `null` until the hardware has one. |
+| `latitude`, `longitude` | number \| null | Decimal degrees (WGS84). `null` without GPS or without a fix. |
+| `speed_kmh` | number \| null | 0–200. |
+| `battery_percent` | number \| null | 0–100. |
+| `crash_detected` | boolean \| null | `true` while the accelerometer reports a crash. `null` if there is no accelerometer. |
+
+Rules:
+
+- **`null` means "this hardware can't measure it yet".** It is never treated as a
+  reading: no alert is raised from a `null`, and the app shows "unknown".
+  Optional fields may also be left out entirely; that is the same as `null`.
+- Never send placeholder values (`0`, `-1`, `false`) for a sensor you don't have. Send `null`.
+- A GPS pair that is out of range, or exactly `0, 0` (no fix), is accepted but
+  stored as "no location". It never triggers a geofence alert.
+- The device ID and key are created by the server operator (`DEVICE_ID`,
+  `DEVICE_API_KEY` in the server environment). Keep the key out of public repos.
+
+### Responses
+
+| Status | Body | What to do |
+|---|---|---|
+| `200` | `{"ok":true,"received_at":"2026-01-01T12:00:00.000Z"}` | Nothing. |
+| `400` | `{"error":"invalid_payload","message":"helmet_connected: helmet_connected is required","details":[...]}` | Fix the JSON. `message` says which field. |
+| `401` | `{"error":"missing_device_key" \| "invalid_device_key", ...}` | Check the `X-Device-Key` header. |
+| `404` | `{"error":"unknown_device", ...}` | Check the device ID in the URL. |
+
+On a network error or 5xx just try again on the next cycle; no retry queue is needed.
+
+### What the server derives
+
+| Situation | Result in the app |
+|---|---|
+| `helmet_connected` goes `true → false` | Alert **Helmet disconnected** (once) |
+| `helmet_worn` goes to `false` | Alert **Helmet not worn** (once) |
+| `crash_detected` goes to `true` | Alert **Crash detected** (once) |
+| Position leaves the parent's safe zone (circle or drawn shape) | Alert **Left the safe zone** (once) |
+| **No telemetry at all for 30 s** | **Scooter offline** (this is not "helmet disconnected") |
+
+Alerts fire on the change only, never once per reading. The matching recovery
+(helmet reconnected, back in zone, scooter back online, …) is logged when the
+condition ends. So the scooter should keep sending telemetry with
+`helmet_connected: false` when the helmet is gone; if it stops sending, the
+parent sees "scooter offline" instead.
+
+### Example: curl
+
+```bash
+curl -X POST "http://localhost:3000/api/devices/scooter-001/telemetry" \
+  -H "Content-Type: application/json" \
+  -H "X-Device-Key: $DEVICE_API_KEY" \
+  -d '{"helmet_connected":true,"helmet_worn":null,"latitude":null,"longitude":null,"speed_kmh":null,"battery_percent":null,"crash_detected":false}'
+```
+
+Helmet lost:
+
+```bash
+curl -X POST "http://localhost:3000/api/devices/scooter-001/telemetry" \
+  -H "Content-Type: application/json" \
+  -H "X-Device-Key: $DEVICE_API_KEY" \
+  -d '{"helmet_connected":false}'
+```
+
+### Example: Arduino ESP8266 (HTTPS)
+
+Uses only the libraries that ship with the ESP8266 Arduino core
+(`ESP8266WiFi`, `ESP8266HTTPClient`, `WiFiClientSecureBearSSL`).
+
+```cpp
+#include <ESP8266WiFi.h>
+#include <ESP8266HTTPClient.h>
+#include <WiFiClientSecureBearSSL.h>
+
+// ---- fill these in (do not commit real values) ----
+const char* WIFI_SSID     = "YOUR_WIFI";        // 2.4 GHz only
+const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
+const char* API_HOST      = "your-app.onrender.com";
+const char* DEVICE_ID     = "scooter-001";
+const char* DEVICE_KEY    = "YOUR_DEVICE_API_KEY";
+// ---------------------------------------------------
+
+const unsigned long TELEMETRY_INTERVAL_MS = 5000;
+const unsigned long HELMET_TIMEOUT_MS     = 15000;
+
+// Set this to millis() whenever a helmet heartbeat arrives over ESP-NOW.
+volatile unsigned long lastHelmetHeartbeat = 0;
+unsigned long lastTelemetry = 0;
+
+void setup() {
+  Serial.begin(115200);
+  // Keep the radio in station mode; if you also use ESP-NOW, both must be on
+  // the same WiFi channel as the access point.
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(250);
+    Serial.print(".");
+  }
+  Serial.println("\nWiFi connected");
+}
+
+bool sendTelemetry(bool helmetConnected) {
+  if (WiFi.status() != WL_CONNECTED) return false;
+
+  BearSSL::WiFiClientSecure client;
+  // Demo shortcut: encrypts the connection but skips certificate checks.
+  // For production, pin the CA with client.setTrustAnchors(...) instead.
+  client.setInsecure();
+
+  HTTPClient https;
+  String url = String("https://") + API_HOST + "/api/devices/" + DEVICE_ID + "/telemetry";
+  if (!https.begin(client, url)) return false;
+  https.setTimeout(8000);
+  https.addHeader("Content-Type", "application/json");
+  https.addHeader("X-Device-Key", DEVICE_KEY);
+
+  // Sensors this board doesn't have yet are sent as null.
+  String body = String("{\"helmet_connected\":") + (helmetConnected ? "true" : "false") +
+                ",\"helmet_worn\":null"
+                ",\"latitude\":null"
+                ",\"longitude\":null"
+                ",\"speed_kmh\":null"
+                ",\"battery_percent\":null"
+                ",\"crash_detected\":false}";
+
+  int status = https.POST(body);
+  if (status != 200) {
+    Serial.printf("telemetry failed: %d %s\n", status, https.getString().c_str());
+  }
+  https.end();
+  return status == 200;
+}
+
+void loop() {
+  unsigned long now = millis();
+  if (now - lastTelemetry >= TELEMETRY_INTERVAL_MS) {
+    lastTelemetry = now;
+    bool helmetConnected =
+        lastHelmetHeartbeat != 0 && (now - lastHelmetHeartbeat) < HELMET_TIMEOUT_MS;
+    sendTelemetry(helmetConnected);
+  }
+}
+```
+
+Notes for the hardware side:
+
+- The TLS handshake takes 1–2 s on an ESP8266 and needs roughly 20 kB of free
+  heap. A 5 s interval leaves enough room.
+- To test without HTTPS on the same WiFi, use a plain `WiFiClient` and
+  `http://<laptop-ip>:3000/...`.
+- When GPS / accelerometer arrive, replace the matching `null` with the value.
+  No server change is needed.
+
+---
+
+## 2. Parent app API (app → server)
+
+No authentication in the hackathon build (see README, "Known gaps").
+
+### `GET /api/devices`
+
+All scooters of the parent.
+
+```json
+{ "devices": [ { "...": "DeviceState, see below" } ] }
+```
+
+### `GET /api/devices/:deviceId/state`
+
+```json
+{
+  "device_id": "scooter-001",
+  "name": "Demo scooter",
+  "child_name": "Emma",
+  "online": true,
+  "last_seen_at": "2026-01-01T12:00:00.000Z",
+  "telemetry": {
+    "helmet_connected": true,
+    "helmet_worn": null,
+    "latitude": 54.6872,
+    "longitude": 25.2797,
+    "speed_kmh": 16.2,
+    "battery_percent": 86,
+    "crash_detected": false
+  },
+  "last_location": { "latitude": 54.6872, "longitude": 25.2797, "at": "2026-01-01T12:00:00.000Z" },
+  "active_alerts": [],
+  "geofence": { "shape": "circle", "latitude": 54.6872, "longitude": 25.2797, "radius_m": 250 },
+  "zone_status": "inside",
+  "server_time": "2026-01-01T12:00:03.000Z"
+}
+```
+
+- `child_name` is the rider's name, or `null` when not set. Alert messages use it ("Emma left the safe zone.").
+- `geofence` is `null` when no zone is set; see `PUT .../geofence` below for its two shapes.
+- `online: false` with `last_seen_at: null` → the scooter has never reported.
+- `online: false` otherwise → **scooter offline**; `telemetry` is the *last known*
+  reading and must not be shown as current (in particular not as "helmet disconnected").
+- `active_alerts` ⊆ `crash_detected`, `helmet_disconnected`, `helmet_not_worn`, `geofence_exit`, `scooter_offline`.
+- `zone_status`: `inside` | `outside` | `unknown` (no zone, or no valid GPS in the latest reading).
+- `last_location` keeps the last valid GPS fix when newer readings have none.
+
+### `GET /api/devices/:deviceId/alerts?limit=100&before=<id>`
+
+Safety history, newest first. `before` pages further back.
+
+```json
+{
+  "alerts": [
+    {
+      "id": 2,
+      "device_id": "scooter-001",
+      "type": "helmet_reconnected",
+      "severity": "recovery",
+      "message": "Emma's helmet is connected again.",
+      "created_at": "2026-01-01T12:01:10.000Z",
+      "latitude": 54.6872,
+      "longitude": 25.2797
+    },
+    {
+      "id": 1,
+      "device_id": "scooter-001",
+      "type": "helmet_disconnected",
+      "severity": "alert",
+      "message": "Emma's helmet is out of range or switched off.",
+      "created_at": "2026-01-01T12:00:40.000Z",
+      "latitude": 54.6872,
+      "longitude": 25.2797
+    }
+  ]
+}
+```
+
+`type` is one of the alert types above (`severity: "alert"`) or a recovery
+(`severity: "recovery"`): `helmet_reconnected`, `helmet_worn`, `crash_cleared`,
+`geofence_enter`, `scooter_online`.
+
+### `PUT /api/devices/:deviceId/geofence`
+
+Set the safe zone. Returns the new `DeviceState`. Two shapes are accepted.
+
+**Circle** (the original format, unchanged). `shape` may be left out. Radius 50–5000 m.
+
+```bash
+curl -X PUT "http://localhost:3000/api/devices/scooter-001/geofence" \
+  -H "Content-Type: application/json" \
+  -d '{"latitude":54.6872,"longitude":25.2797,"radius_m":250}'
+```
+
+**Polygon** (a zone drawn on the map). `points` are the corners in drawing
+order; the last one connects back to the first.
+
+```bash
+curl -X PUT "http://localhost:3000/api/devices/scooter-001/geofence" \
+  -H "Content-Type: application/json" \
+  -d '{"shape":"polygon","points":[{"lat":54.6862,"lon":25.2787},{"lat":54.6862,"lon":25.2807},{"lat":54.6882,"lon":25.2807},{"lat":54.6882,"lon":25.2787}]}'
+```
+
+Polygon rules (otherwise `400 invalid_payload` with the reason in `message`):
+
+- 3 to 50 points, each with `lat` in -90..90 and `lon` in -180..180.
+- The outline must not cross or touch itself, and no point may be repeated.
+- Area of at least 400 m².
+
+The zone in every `DeviceState` looks like this:
+
+```json
+{
+  "shape": "polygon",
+  "points": [{ "lat": 54.6862, "lon": 25.2787 }, { "lat": 54.6862, "lon": 25.2807 }, { "lat": 54.6882, "lon": 25.2807 }, { "lat": 54.6882, "lon": 25.2787 }],
+  "latitude": 54.6872,
+  "longitude": 25.2797,
+  "radius_m": 128
+}
+```
+
+- `shape` is `"circle"` or `"polygon"`. If it is missing, treat the zone as a circle.
+- For a circle, `latitude` / `longitude` / `radius_m` are the centre and radius, and there is no `points`.
+- For a polygon, the server fills `latitude` / `longitude` / `radius_m` with a
+  circle that encloses the shape, so a client that only knows circles still has
+  something to draw. The alert logic uses `points`, not this circle.
+
+Alerts work the same for both shapes: **Left the safe zone** once when the
+scooter crosses out, **Back in the safe zone** once when it returns. A position
+exactly on the edge counts as inside. Readings without valid GPS are ignored.
+
+### `DELETE /api/devices/:deviceId/geofence`
+
+Remove the safe zone. Returns the new `DeviceState`.
+
+### `PATCH /api/devices/:deviceId`
+
+Rename the scooter and/or set the child's name. Send only the fields to change.
+Names are 1–40 characters; `"child_name": null` clears it. Returns the new `DeviceState`.
+
+```bash
+curl -X PATCH "http://localhost:3000/api/devices/scooter-001" \
+  -H "Content-Type: application/json" \
+  -d '{"child_name":"Emma"}'
+```
+
+### `GET /api/stream` (Server-Sent Events)
+
+Live updates. Named events, each `data:` line is JSON:
+
+| Event | Data | When |
+|---|---|---|
+| `hello` | `{ "devices": DeviceState[] }` | Once, on connect |
+| `state` | `DeviceState` | Every telemetry, offline timeout, geofence change |
+| `alert` | `SafetyEvent` (same shape as in `/alerts`) | A new alert or recovery was logged |
+
+A `: keepalive` comment is sent every 15 s. Clients that can't use SSE can poll
+`GET /api/devices` instead.
+
+```bash
+curl -N http://localhost:3000/api/stream
+```
+
+### `GET /api/health`
+
+`{"ok":true,"server_time":"..."}`. Use it to check the deployment is up.
+
+---
+
+## 3. Demo mode
+
+Only when the server runs with `DEMO_MODE=true` (default in local dev).
+
+- `GET /api/demo` → `{ "enabled": true, "running": false, "scenario": null, "device_id": "scooter-001" }`
+- `POST /api/demo` with `{"scenario":"<name>"}` starts or switches the built-in
+  simulator; `{"scenario":"stop"}` stops it.
+
+Scenarios: `normal`, `helmet-disconnect`, `helmet-reconnect`, `helmet-not-worn`,
+`crash`, `geofence-exit`, `offline`.
+
+The simulator (also `npm run simulate`) sends real telemetry to
+`POST /api/devices/:deviceId/telemetry` with the device key, so mock data takes
+the same path as hardware.

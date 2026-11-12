@@ -1,0 +1,23 @@
+{
+  "name": "helmetto",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": { "node": ">=22.13" },
+  "workspaces": ["shared", "ai", "api", "scripts", "web"],
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c blue,magenta \"npm run dev -w @helmetto/api\" \"npm run dev -w @helmetto/web\"",
+    "build": "npm run build -w @helmetto/web",
+    "start": "npm run start -w @helmetto/api",
+    "simulate": "tsx scripts/simulate.ts",
+    "test": "vitest run",
+    "typecheck": "tsc -p ai --noEmit && tsc -p api --noEmit && tsc -p scripts --noEmit && tsc -p web --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "concurrently": "^9.1.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^3.0.0"
+  }
+}

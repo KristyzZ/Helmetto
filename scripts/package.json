@@ -1,0 +1,9 @@
+{
+  "name": "@helmetto/scripts",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "exports": { "./simulator": "./lib/simulator.ts" },
+  "scripts": { "simulate": "tsx simulate.ts" },
+  "dependencies": { "@helmetto/ai": "*", "@helmetto/shared": "*" }
+}
