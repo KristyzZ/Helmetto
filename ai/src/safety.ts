@@ -7,7 +7,7 @@ import {
   type SafetyEventType,
   type Telemetry,
 } from '@helmetto/shared';
-import { distanceFromGeofenceCenter } from './geo';
+import { isPolygonZone, polygonAreaM2, zoneDepthMeters } from './geo';
 
 /** Which alert conditions are active for one scooter. */
 export type Conditions = Record<AlertType, boolean>;
@@ -49,13 +49,20 @@ function hold(previous: boolean, reading: boolean | null | undefined, activeWhen
   return reading === activeWhen;
 }
 
+/** Narrow zones get a smaller margin so the scooter can still count as back inside. */
+function hysteresisMargin(geofence: Geofence): number {
+  const size = isPolygonZone(geofence)
+    ? Math.sqrt(polygonAreaM2(geofence.points ?? [])) * 0.05
+    : geofence.radius_m * 0.1;
+  return Math.min(GEOFENCE_HYSTERESIS_M, size);
+}
+
 function geofenceExit(previous: boolean, telemetry: Telemetry, geofence: Geofence | null): boolean {
   if (!geofence) return false;
-  const distance = distanceFromGeofenceCenter(geofence, telemetry.latitude, telemetry.longitude);
-  if (distance === null) return previous; // GPS null/invalid: ignore the check
-  if (!previous) return distance > geofence.radius_m;
-  const margin = Math.min(GEOFENCE_HYSTERESIS_M, geofence.radius_m * 0.1);
-  return distance > geofence.radius_m - margin;
+  const depth = zoneDepthMeters(geofence, { lat: telemetry.latitude, lon: telemetry.longitude });
+  if (depth === null) return previous; // GPS null/invalid: ignore the check
+  if (!previous) return depth < 0;
+  return depth < hysteresisMargin(geofence);
 }
 
 /** Conditions after a telemetry reading. Receiving telemetry means the scooter is online. */
