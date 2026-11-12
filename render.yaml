@@ -1,0 +1,23 @@
+# Render blueprint: one long-running Node service that serves the API and the built web app.
+# Dashboard -> New -> Blueprint -> pick this repo. See infra/DEPLOY.md.
+services:
+  - type: web
+    name: helmetto
+    runtime: node
+    plan: free
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NODE_ENV
+        value: production
+      - key: DEVICE_ID
+        value: scooter-001
+      - key: DEVICE_NAME
+        value: Demo scooter
+      - key: DEVICE_API_KEY
+        generateValue: true # Render creates a random key; copy it from the Environment tab into the firmware
+      - key: DEMO_MODE
+        value: "true" # in-app Demo panel; set to "false" after the pitch
