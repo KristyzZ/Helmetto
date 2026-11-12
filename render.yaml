@@ -17,6 +17,8 @@ services:
         value: scooter-001
       - key: DEVICE_NAME
         value: Demo scooter
+      - key: DEVICE_CHILD_NAME
+        value: Emma
       - key: DEVICE_API_KEY
         generateValue: true # Render creates a random key; copy it from the Environment tab into the firmware
       - key: DEMO_MODE

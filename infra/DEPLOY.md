@@ -20,7 +20,8 @@ Requirements: Node 22.13+ (uses the built-in `node:sqlite`), HTTPS.
 | `NODE_ENV` | yes | `production` |
 | `DEVICE_ID` | yes | e.g. `scooter-001`. Goes into the firmware URL. |
 | `DEVICE_API_KEY` | yes | Long random string, e.g. `openssl rand -hex 24`. Goes into the firmware `X-Device-Key` header. Only its hash is stored. |
-| `DEVICE_NAME` | no | Shown in the app. |
+| `DEVICE_NAME` | no | Scooter name, shown in the app. |
+| `DEVICE_CHILD_NAME` | no | The rider's name, shown in the app and in alerts. The parent can change it in the app. |
 | `DEMO_MODE` | no | `true` enables the in-app Demo panel. Off by default in production. |
 | `DATABASE_PATH` | no | Default `./data/helmetto.db`. Point at a mounted disk to keep history across deploys. |
 | `PORT` | no | Set by the host. |
