@@ -1,3 +1,4 @@
+import { zoneDepthMeters } from '@helmetto/ai';
 import {
   DEVICE_KEY_HEADER,
   TELEMETRY_INTERVAL_MS,
@@ -44,7 +45,9 @@ export class Simulator {
 
   // ride state
   private center: { latitude: number; longitude: number };
-  private zoneRadius = DEFAULT_ZONE_RADIUS_M;
+  private zone: Geofence | null = null;
+  /** Radius of the ride loop around `center`; kept well inside the zone. */
+  private loopRadius = LOOP_RADIUS_M;
   private angle = 0; // position on the loop, radians
   private escapeDistance: number | null = null; // meters from center when leaving the zone
   private helmetConnected = true;
@@ -126,13 +129,53 @@ export class Simulator {
         });
         this.log(`no safe zone set: created one (${DEFAULT_ZONE_RADIUS_M} m)`);
       }
-      if (geofence) {
-        this.center = { latitude: geofence.latitude, longitude: geofence.longitude };
-        this.zoneRadius = geofence.radius_m;
-      }
+      this.useZone(geofence);
     } catch {
       // server not reachable yet: tick() reports it
     }
+  }
+
+  /** Pick a ride centre and loop size that fit the zone, whatever its shape. */
+  private useZone(geofence: Geofence | null): void {
+    this.zone = geofence;
+    if (!geofence) {
+      this.loopRadius = LOOP_RADIUS_M;
+      return;
+    }
+    // The point deepest inside the zone, searched on a grid over its enclosing
+    // circle. For a circle that is its centre; for a drawn shape it is a point
+    // safely away from every edge (the middle of an L or U is not inside it).
+    let best = { latitude: geofence.latitude, longitude: geofence.longitude };
+    let bestDepth = zoneDepthMeters(geofence, { lat: best.latitude, lon: best.longitude }) ?? 0;
+    if (geofence.shape === 'polygon') {
+      const STEPS = 24;
+      const span = geofence.radius_m / METERS_PER_DEG_LAT;
+      const lonScale = Math.cos((geofence.latitude * Math.PI) / 180);
+      for (let i = 0; i <= STEPS; i++) {
+        for (let j = 0; j <= STEPS; j++) {
+          const latitude = geofence.latitude + span * ((2 * i) / STEPS - 1);
+          const longitude = geofence.longitude + (span / lonScale) * ((2 * j) / STEPS - 1);
+          const depth = zoneDepthMeters(geofence, { lat: latitude, lon: longitude }) ?? -Infinity;
+          if (depth > bestDepth) {
+            bestDepth = depth;
+            best = { latitude, longitude };
+          }
+        }
+      }
+    }
+    this.center = best;
+    this.loopRadius = Math.max(2, Math.min(LOOP_RADIUS_M, bestDepth * 0.5));
+  }
+
+  /** Distance from the ride centre to the zone edge in the current riding direction. */
+  private distanceToEdge(): number {
+    if (!this.zone) return DEFAULT_ZONE_RADIUS_M;
+    const limit = this.zone.radius_m * 2 + 50;
+    for (let distance = 0; distance <= limit; distance += 2) {
+      const p = this.position(distance);
+      if ((zoneDepthMeters(this.zone, { lat: p.latitude, lon: p.longitude }) ?? -1) < 0) return distance;
+    }
+    return limit;
   }
 
   private position(distance: number): { latitude: number; longitude: number } {
@@ -167,12 +210,13 @@ export class Simulator {
     let distance: number;
     if (this.escapeDistance !== null) {
       // ride straight out of the zone
+      // first reading just inside the edge, then straight out
       this.escapeDistance =
-        this.escapeDistance < 0 ? Math.max(this.zoneRadius - 10, 0) : this.escapeDistance + meters;
+        this.escapeDistance < 0 ? Math.max(this.distanceToEdge() - 10, 0) : this.escapeDistance + meters;
       distance = this.escapeDistance;
     } else {
       // loop around the center, well inside the zone
-      distance = Math.min(LOOP_RADIUS_M, this.zoneRadius * 0.5);
+      distance = this.loopRadius;
       this.angle = (this.angle + meters / distance) % (2 * Math.PI);
     }
 

@@ -5,5 +5,5 @@
   "type": "module",
   "exports": { "./simulator": "./lib/simulator.ts" },
   "scripts": { "simulate": "tsx simulate.ts" },
-  "dependencies": { "@helmetto/shared": "*" }
+  "dependencies": { "@helmetto/ai": "*", "@helmetto/shared": "*" }
 }
