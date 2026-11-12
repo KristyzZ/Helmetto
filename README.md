@@ -70,6 +70,18 @@ when the server runs with `DEMO_MODE=true` (the default locally).
 | `npm run build` | Build the web app into `web/dist` |
 | `npm start` | Production mode: API + built web app on one port |
 
+## Screens
+
+| All good | Alert | Drawing a zone | Alerts |
+|---|---|---|---|
+| ![Dashboard, all good](docs/screenshots/dashboard-all-good-light.png) | ![Dashboard, helmet alert](docs/screenshots/dashboard-helmet-alert-dark.png) | ![Drawing a safe zone](docs/screenshots/map-drawing-light.png) | ![Alerts](docs/screenshots/alerts-light.png) |
+
+More in [`docs/screenshots/`](docs/screenshots), in light and dark mode.
+
+Draw a safe zone on the Map tab: **Draw zone**, tap to drop corners, drag a
+corner to move it, tap a **+** to add one, then **Save**. **Circle** is the
+quick alternative. Set the child's name on the Scooters tab (pencil icon).
+
 ## How the safety logic behaves
 
 - The scooter posts telemetry every ~5 s. Fields the hardware can't measure yet
@@ -78,8 +90,9 @@ when the server runs with `DEMO_MODE=true` (the default locally).
   crash detected, left the safe zone. Recoveries are logged too.
 - No telemetry for 30 s → **scooter offline**. This is a separate state from
   "helmet disconnected": the app then shows helmet status as unknown.
-- Geofence is a circle (centre + radius, haversine). It is ignored when GPS is
-  `null`, out of range or `0,0`.
+- The safe zone is either a shape drawn on the map (polygon, ray casting) or a
+  circle (centre + radius, haversine). It is ignored when GPS is `null`, out of
+  range or `0,0`.
 
 ## Deploy
 
