@@ -5,7 +5,7 @@ extern "C" {
   #include <user_interface.h>
 }
 
-#define WIFI_CHANNEL 6
+#define WIFI_CHANNEL 11
 
 uint8_t receiverMac[] = {
   0x68, 0xC6, 0x3A, 0xA0, 0x59, 0x45

@@ -21,10 +21,11 @@ extern "C" {
 #include "telemetry_config.example.h"
 #endif
 
+constexpr uint32_t WIFI_RETRY_INTERVAL_MS = 15000;
 constexpr uint32_t TELEMETRY_INTERVAL_MS = 5000;
 constexpr uint16_t TELEMETRY_TIMEOUT_MS = 2000;
 constexpr time_t MIN_TLS_TIME = 1704067200;  // 2024-01-01 UTC
-constexpr uint8_t WIFI_CHANNEL = 6;
+constexpr uint8_t WIFI_CHANNEL = 11;
 constexpr uint8_t MPU_ADDRESS = 0x68;
 constexpr uint8_t MPU_POWER_MANAGEMENT = 0x6B;
 constexpr uint8_t MPU_ACCEL_CONFIG = 0x1C;
@@ -43,6 +44,8 @@ volatile uint32_t lastSignal = 0;
 volatile bool heartbeatReceived = false;
 bool mpuReady = false;
 bool impactPending = false;
+WiFiEventHandler wifiDisconnectHandler;
+uint32_t lastWifiAttempt = 0;
 
 enum HelmetState {
   NOT_FOUND,
@@ -218,6 +221,12 @@ void setup() {
   WiFi.persistent(false);
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
+  WiFi.setSleepMode(WIFI_NONE_SLEEP);
+  WiFi.setAutoReconnect(true);
+  wifiDisconnectHandler = WiFi.onStationModeDisconnected(
+      [](const WiFiEventStationModeDisconnected &event) {
+        Serial.printf("Wi-Fi link lost (reason %u)\n", static_cast<unsigned>(event.reason));
+      });
   wifi_set_channel(WIFI_CHANNEL);
   Serial.print("Scooter STA MAC: ");
   Serial.println(WiFi.macAddress());
@@ -233,6 +242,7 @@ void setup() {
   }
 
   if (WIFI_SSID[0] != '\0') {
+    lastWifiAttempt = millis();
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD, WIFI_CHANNEL);
     Serial.println("Connecting to Wi-Fi...");
   } else {
@@ -249,19 +259,26 @@ void loop() {
       if (strncmp(TELEMETRY_URL, "https://", 8) == 0) {
         configTime(0, 0, "pool.ntp.org", "time.nist.gov");
       }
-      Serial.printf("Wi-Fi connected on channel %d\n", WiFi.channel());
+      Serial.printf("Wi-Fi connected on channel %d | RSSI: %d dBm | IP: %s\n",
+                    WiFi.channel(), WiFi.RSSI(), WiFi.localIP().toString().c_str());
       if (WiFi.channel() != WIFI_CHANNEL) {
-        Serial.println("ESP-NOW channel mismatch: set the 2.4 GHz access point to channel 6");
+        Serial.printf("ESP-NOW channel mismatch: helmet expects channel %u\n", WIFI_CHANNEL);
       }
     } else {
-      Serial.println("Wi-Fi disconnected");
+      lastWifiAttempt = millis();
     }
   }
 
   updateHelmet();
 
-  static uint32_t lastMpuRead = 0;
   const uint32_t now = millis();
+  if (!wifiConnected && WIFI_SSID[0] != '\0' && now - lastWifiAttempt >= WIFI_RETRY_INTERVAL_MS) {
+    lastWifiAttempt = now;
+    Serial.printf("Wi-Fi reconnect attempt (status %d)\n", WiFi.status());
+    WiFi.reconnect();
+  }
+
+  static uint32_t lastMpuRead = 0;
   if (now - lastMpuRead >= MPU_READ_INTERVAL_MS) {
     lastMpuRead = now;
     readMpu(now);
