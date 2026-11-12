@@ -1,0 +1,9 @@
+# Local Arduino credentials
+wifi_config.h
+secrets.h
+
+# Compiled firmware
+*.bin
+*.elf
+*.map
+*.hex
