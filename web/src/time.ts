@@ -31,7 +31,7 @@ export function duration(iso: string | null, serverNow: number): string {
 }
 
 export function clock(iso: string): string {
-  return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  return new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 }
 
 export function dayLabel(iso: string): string {

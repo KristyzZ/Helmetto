@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { DeviceState, SafetyEvent } from '@helmetto/shared';
+import type { SafetyEvent } from '@helmetto/shared';
 import { DemoPanel } from './DemoPanel';
 import { Icon, type IconName } from './icons';
 import { useLive } from './live';
@@ -8,7 +8,7 @@ import { Alerts } from './pages/Alerts';
 import { Dashboard } from './pages/Dashboard';
 import { Devices } from './pages/Devices';
 import { MapPage } from './pages/MapPage';
-import { ALERT_ADVICE, EVENT_ICON, rideAlerts, title } from './status';
+import { EVENT_ICON, alertTone, displayName, title, visibleAlerts } from './status';
 import { useNow } from './time';
 
 type Tab = 'home' | 'map' | 'alerts' | 'devices';
@@ -21,9 +21,13 @@ const TABS: { id: Tab; label: string; icon: IconName }[] = [
 const isTab = (value: string): value is Tab => TABS.some((t) => t.id === value);
 
 const SELECTED_KEY = 'helmetto.device';
-/** Toasts announce the change; the banner and Alerts tab keep showing what is still active. */
-const TOAST_MS = { alert: 9_000, recovery: 6_000 };
-const MAX_TOASTS = 3;
+const TOAST_MS = 5_000;
+
+interface Toast {
+  event: SafetyEvent;
+  /** Set when the event is about a scooter other than the one on screen. */
+  about: string | null;
+}
 
 function readStored(key: string): string | null {
   try {
@@ -33,72 +37,52 @@ function readStored(key: string): string | null {
   }
 }
 
-/** Always-visible strip for the selected scooter's active alerts. */
-function AlertBanner({ device, onOpen }: { device: DeviceState; onOpen: () => void }) {
-  const ride = device.online ? rideAlerts(device) : [];
-  const first = ride[0];
-  if (first) {
-    return (
-      <button className="banner banner--danger" onClick={onOpen} role="alert">
-        <Icon name={EVENT_ICON[first]} size={22} />
-        <span>
-          <strong>{title(first)}{ride.length > 1 ? ` +${ride.length - 1} more` : ''}</strong>
-          <small>{ALERT_ADVICE[first]}</small>
-        </span>
-        <Icon name="chevron" size={18} />
-      </button>
-    );
-  }
-  if (device.active_alerts.includes('scooter_offline')) {
-    return (
-      <button className="banner banner--muted" onClick={onOpen} role="status">
-        <Icon name="signalOff" size={22} />
-        <span>
-          <strong>Scooter offline</strong>
-          <small>Not sending data. Helmet and location status are unknown.</small>
-        </span>
-        <Icon name="chevron" size={18} />
-      </button>
-    );
-  }
-  return null;
-}
-
 export function App() {
   const [tab, setTab] = useState<Tab>(() => {
     const hash = location.hash.slice(1);
     return isTab(hash) ? hash : 'home';
   });
   const [selectedId, setSelectedId] = useState<string | null>(() => readStored(SELECTED_KEY));
-  const [toasts, setToasts] = useState<SafetyEvent[]>([]);
+  const [toast, setToast] = useState<Toast | null>(null);
   const [demoOpen, setDemoOpen] = useState(() => location.hash === '#demo');
   const logoTaps = useRef<number[]>([]);
-
-  const dismiss = useCallback((id: number) => setToasts((list) => list.filter((t) => t.id !== id)), []);
+  const toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const current = useRef<{ deviceId: string | null; names: Record<string, string> }>({ deviceId: null, names: {} });
 
   const live = useLive((event) => {
-    setToasts((list) => [event, ...list.filter((t) => t.id !== event.id)].slice(0, MAX_TOASTS));
-    setTimeout(() => dismiss(event.id), TOAST_MS[event.severity]);
-    if (event.severity === 'alert') void showBrowserNotification(`Helmetto: ${title(event.type)}`, event.message, event.type);
+    if (event.severity === 'alert') void showBrowserNotification(title(event.type), event.message, event.type);
+    // The screen already shows this scooter's alerts (hero, alert strip, Alerts tab),
+    // so a toast is only for what would otherwise go unseen: recoveries, and
+    // alerts about another scooter.
+    const other = event.device_id !== current.current.deviceId;
+    if (event.severity === 'alert' && !other) return;
+    setToast({ event, about: other ? (current.current.names[event.device_id] ?? null) : null });
+    clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), TOAST_MS);
   });
 
   const now = useNow();
   const serverNow = now + live.clockOffsetMs;
   const device = live.devices.find((d) => d.device_id === selectedId) ?? live.devices[0] ?? null;
   const events = device ? (live.alerts[device.device_id] ?? []) : [];
+  const active = device ? visibleAlerts(device) : [];
+  current.current = {
+    deviceId: device?.device_id ?? null,
+    names: Object.fromEntries(live.devices.map((d) => [d.device_id, displayName(d)])),
+  };
 
-  const go = (next: Tab) => {
+  const go = useCallback((next: Tab) => {
     setTab(next);
     history.replaceState(null, '', `#${next}`);
     window.scrollTo(0, 0);
-  };
+  }, []);
 
   const select = (deviceId: string) => {
     setSelectedId(deviceId);
     try {
       localStorage.setItem(SELECTED_KEY, deviceId);
     } catch {
-      // private mode: selection just won't persist
+      // private mode: the choice just won't persist
     }
   };
 
@@ -122,88 +106,99 @@ export function App() {
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
-  const alertCount = device ? device.active_alerts.length : 0;
+  const down = live.connection === 'down';
+  // Home shows alerts in the hero and Alerts lists them; other tabs get one slim strip.
+  const strip = device && !down && (tab === 'map' || tab === 'devices') ? active[0] : undefined;
 
   return (
     <div className={`app app--${tab}`}>
       <header className="topbar">
-        <button className="brand" onClick={tapLogo} aria-label="Helmetto">
-          <img src="/icon.svg" alt="" width="30" height="30" />
-          <span>Helmetto</span>
+        <button className="logo" onClick={tapLogo} aria-label="Helmetto">
+          <img src="/icon.svg" alt="" width="28" height="28" />
         </button>
         {device && live.devices.length > 1 ? (
-          <select className="device-select" value={device.device_id} onChange={(e) => select(e.target.value)} aria-label="Scooter">
+          <select className="topbar__select" value={device.device_id} onChange={(e) => select(e.target.value)} aria-label="Scooter">
             {live.devices.map((d) => (
-              <option key={d.device_id} value={d.device_id}>{d.name}</option>
+              <option key={d.device_id} value={d.device_id}>{displayName(d)}</option>
             ))}
           </select>
         ) : (
-          device && <span className="topbar__device">{device.name}</span>
+          <span className="topbar__name">{device ? displayName(device) : 'Helmetto'}</span>
         )}
-        <span className={`link-state link-state--${live.connection}`} title={`Server connection: ${live.connection}`}>
-          <i />
-          {live.connection === 'live' ? 'Live' : live.connection === 'polling' ? 'Syncing' : live.connection === 'down' ? 'No connection' : 'Connecting'}
+        <span className="state topbar__link" title={`Server connection: ${live.connection}`}>
+          <i className={`dot tone-${live.connection === 'live' ? 'ok' : down ? 'alert' : 'warn'} ${live.connection === 'live' ? 'dot--pulse' : ''}`} />
+          {live.connection === 'live' ? 'Live' : down ? 'No connection' : 'Connecting'}
         </span>
       </header>
 
-      {live.connection === 'down' && (
-        <div className="banner banner--warn" role="status">
-          <Icon name="signalOff" size={22} />
-          <span>
-            <strong>Can't reach Helmetto</strong>
-            <small>Check this phone's internet connection. The status shown may be out of date.</small>
-          </span>
+      {down && (
+        <div className="strip tone-warn" role="status">
+          <Icon name="signalOff" size={18} />
+          <strong>Can't reach Helmetto</strong>
+          <span>Status may be out of date</span>
         </div>
       )}
-      {device && live.connection !== 'down' && tab !== 'alerts' && <AlertBanner device={device} onOpen={() => go('alerts')} />}
+      {strip && (
+        <button className={`strip tone-${alertTone(strip)}`} onClick={() => go('alerts')} role="alert">
+          <Icon name={EVENT_ICON[strip]} size={18} />
+          <strong>{title(strip)}</strong>
+          {active.length > 1 && <span>+{active.length - 1} more</span>}
+          <Icon name="chevron" size={16} />
+        </button>
+      )}
 
       <main className="content">
         {!live.loaded ? (
-          <div className="empty empty--page">
-            {live.connection === 'down' ? (
-              <><Icon name="signalOff" size={28} /><strong>Can't load your scooters</strong><span>Retrying automatically…</span></>
+          <div className="blank">
+            {down ? (
+              <><Icon name="signalOff" size={28} /><strong>Can't load your scooters</strong><span>Trying again…</span></>
             ) : (
-              <><div className="spinner" /><span>Loading…</span></>
+              <div className="spinner" aria-label="Loading" />
             )}
           </div>
         ) : !device ? (
-          <div className="empty empty--page">
+          <div className="blank">
             <Icon name="scooter" size={28} />
             <strong>No scooters yet</strong>
-            <span>Add a device on the server (DEVICE_ID and DEVICE_API_KEY) to start.</span>
+            <span>Add a device on the server to start.</span>
           </div>
         ) : tab === 'home' ? (
           <Dashboard device={device} events={events} serverNow={serverNow} onOpenMap={() => go('map')} onOpenAlerts={() => go('alerts')} />
         ) : tab === 'map' ? (
           <MapPage key={device.device_id} device={device} serverNow={serverNow} onSaved={live.applyState} />
         ) : tab === 'alerts' ? (
-          <Alerts device={device} events={events} serverNow={serverNow} />
+          <Alerts device={device} events={events} serverNow={serverNow} onOpenMap={() => go('map')} />
         ) : (
-          <Devices devices={live.devices} selectedId={device.device_id} serverNow={serverNow} onSelect={(id) => { select(id); go('home'); }} />
+          <Devices
+            devices={live.devices}
+            selectedId={device.device_id}
+            serverNow={serverNow}
+            onSelect={(id) => { select(id); go('home'); }}
+            onSaved={live.applyState}
+          />
         )}
       </main>
 
-      <div className="toasts" aria-live="assertive">
-        {toasts.map((toast) => (
-          <div key={toast.id} className={`toast toast--${toast.severity}`}>
-            <Icon name={EVENT_ICON[toast.type]} size={20} />
-            <span>
-              <strong>{title(toast.type)}</strong>
-              <small>{toast.message}</small>
-            </span>
-            <button className="icon-button" onClick={() => dismiss(toast.id)} aria-label="Dismiss">
-              <Icon name="close" size={18} />
-            </button>
-          </div>
-        ))}
-      </div>
+      {toast && (
+        <button
+          className="toast"
+          aria-live="polite"
+          onClick={() => {
+            if (toast.about) select(toast.event.device_id);
+            setToast(null);
+          }}
+        >
+          <i className={`dot tone-${toast.event.severity === 'alert' ? 'alert' : 'ok'}`} />
+          <strong>{toast.about ? `${toast.about}: ` : ''}{title(toast.event.type)}</strong>
+        </button>
+      )}
 
       <nav className="tabbar">
         {TABS.map((item) => (
-          <button key={item.id} className={`tab ${tab === item.id ? 'tab--active' : ''}`} onClick={() => go(item.id)} aria-current={tab === item.id ? 'page' : undefined}>
+          <button key={item.id} className="tab" onClick={() => go(item.id)} aria-current={tab === item.id ? 'page' : undefined}>
             <span className="tab__icon">
               <Icon name={item.icon} />
-              {item.id === 'alerts' && alertCount > 0 && <b className="badge">{alertCount}</b>}
+              {item.id === 'alerts' && active.length > 0 && <b className={`badge tone-${alertTone(active[0]!)}`}>{active.length}</b>}
             </span>
             {item.label}
           </button>

@@ -1,55 +1,54 @@
 import { useState } from 'react';
-import type { DeviceState, SafetyEvent } from '@helmetto/shared';
+import type { AlertType, DeviceState, SafetyEvent } from '@helmetto/shared';
 import { Icon } from '../icons';
 import { notifyPermission, requestNotifyPermission, type NotifyPermission } from '../notify';
-import { ALERT_ADVICE, EVENT_ICON, title } from '../status';
-import { ago, clock, dayLabel, duration } from '../time';
+import { Sheet } from '../Sheet';
+import { ALERT_HELP, EVENT_ICON, alertLine, alertTone, title, visibleAlerts } from '../status';
+import { clock, dayLabel, duration } from '../time';
 
-export function EventRow(props: { event: SafetyEvent; serverNow: number; compact?: boolean }) {
-  const { event, serverNow, compact } = props;
-  return (
-    <li className={`event event--${event.severity}`}>
-      <span className="event__icon"><Icon name={EVENT_ICON[event.type]} size={18} /></span>
-      <span className="event__body">
-        <strong>{title(event.type)}</strong>
-        {!compact && <span className="event__message">{event.message}</span>}
-      </span>
-      <time className="event__time" dateTime={event.created_at} title={new Date(event.created_at).toLocaleString()}>
-        {compact ? ago(event.created_at, serverNow) : clock(event.created_at)}
-      </time>
-    </li>
-  );
-}
-
-function NotificationCard() {
+function Notifications() {
   const [permission, setPermission] = useState<NotifyPermission>(notifyPermission());
-  if (permission === 'granted') {
-    return <p className="hint"><Icon name="check" size={16} /> Browser notifications are on while Helmetto is open.</p>;
-  }
-  if (permission === 'unsupported') {
-    return <p className="hint">This browser does not support notifications. Alerts still appear here in the app.</p>;
-  }
-  if (permission === 'denied') {
-    return <p className="hint">Notifications are blocked for this site. Allow them in the browser settings to get alerts outside the app.</p>;
-  }
+  const [open, setOpen] = useState(false);
+  const status = { granted: 'On', denied: 'Blocked', default: 'Off', unsupported: 'Not available' }[permission];
+  const help = {
+    granted: 'You get a notification for every new alert while Helmetto is open, even in the background.',
+    denied: 'Notifications are blocked for this site. Allow them in your browser settings, then reload.',
+    default: 'Get a notification for every new alert while Helmetto is open, even in the background.',
+    unsupported: 'This browser cannot show notifications. Alerts still appear in the app.',
+  }[permission];
+
   return (
-    <div className="card card--row">
-      <span>
-        <strong>Get notified</strong>
-        <small>Show a notification when an alert happens while Helmetto is open in the background.</small>
-      </span>
-      <button className="button button--primary" onClick={async () => setPermission(await requestNotifyPermission())}>
-        Turn on
+    <>
+      <button className="row row--card" onClick={() => setOpen(true)}>
+        <Icon name="bell" size={20} />
+        <span className="row__text"><strong>Notifications</strong></span>
+        <span className="state"><i className={`dot tone-${permission === 'granted' ? 'ok' : 'unknown'}`} />{status}</span>
+        <Icon name="chevron" size={16} />
       </button>
-    </div>
+      {open && (
+        <Sheet title="Notifications" icon="bell" onClose={() => setOpen(false)}>
+          <p>{help}</p>
+          {permission === 'default' && (
+            <div className="sheet__actions">
+              <button className="button button--primary" onClick={async () => setPermission(await requestNotifyPermission())}>
+                Turn on notifications
+              </button>
+            </div>
+          )}
+        </Sheet>
+      )}
+    </>
   );
 }
 
-export function Alerts(props: { device: DeviceState; events: SafetyEvent[]; serverNow: number }) {
+export function Alerts(props: { device: DeviceState; events: SafetyEvent[]; serverNow: number; onOpenMap: () => void }) {
   const { device, events, serverNow } = props;
+  const [openAlert, setOpenAlert] = useState<AlertType | null>(null);
+  const [openEvent, setOpenEvent] = useState<SafetyEvent | null>(null);
+  const active = visibleAlerts(device);
 
-  // when each active alert started = its newest matching event
-  const since = (type: string) => events.find((e) => e.type === type)?.created_at ?? null;
+  // an active alert started at its newest matching event
+  const since = (type: AlertType) => events.find((e) => e.type === type)?.created_at ?? null;
 
   const days: { label: string; items: SafetyEvent[] }[] = [];
   for (const event of events) {
@@ -64,51 +63,77 @@ export function Alerts(props: { device: DeviceState; events: SafetyEvent[]; serv
       <h1 className="page__title">Alerts</h1>
 
       <section>
-        <h2 className="section-title">Active now</h2>
-        {device.active_alerts.length === 0 ? (
-          <div className="card card--ok">
-            <Icon name="check" size={20} />
-            <span>No active alerts for {device.name}.</span>
+        <h2 className="label">Active now</h2>
+        {active.length === 0 ? (
+          <div className="row row--card row--static">
+            <span className="disc disc--sm tone-ok"><Icon name="check" size={18} /></span>
+            <span className="row__text"><strong>No active alerts</strong></span>
           </div>
         ) : (
-          <ul className="active-list">
-            {device.active_alerts.map((type) => (
-              <li key={type} className={`active active--${type === 'scooter_offline' ? 'muted' : 'danger'}`}>
-                <span className="active__icon"><Icon name={EVENT_ICON[type]} size={22} /></span>
-                <span>
-                  <strong>{title(type)}</strong>
-                  <span className="active__advice">{ALERT_ADVICE[type]}</span>
-                  {since(type) && <small>For {duration(since(type), serverNow)}</small>}
-                </span>
+          <ul className="list">
+            {active.map((type) => (
+              <li key={type}>
+                <button className="row" onClick={() => setOpenAlert(type)}>
+                  <span className={`disc disc--sm tone-${alertTone(type)}`}><Icon name={EVENT_ICON[type]} size={18} /></span>
+                  <span className="row__text">
+                    <strong>{title(type)}</strong>
+                    <small>{alertLine(type, device)}</small>
+                  </span>
+                  {since(type) && <time>{duration(since(type), serverNow)}</time>}
+                  <Icon name="chevron" size={16} />
+                </button>
               </li>
             ))}
           </ul>
         )}
       </section>
 
-      <NotificationCard />
+      <Notifications />
 
       <section>
-        <h2 className="section-title">History</h2>
+        <h2 className="label">History</h2>
         {events.length === 0 ? (
-          <div className="empty">
-            <Icon name="bell" size={26} />
-            <strong>No alerts yet</strong>
-            <span>Helmet, crash, safe-zone and connection events will be listed here.</span>
-          </div>
+          <p className="empty">Nothing has happened yet.</p>
         ) : (
           days.map((day) => (
-            <div key={day.label} className="card">
-              <div className="day">{day.label}</div>
-              <ul className="events">
+            <div key={day.label} className="day">
+              <h3>{day.label}</h3>
+              <ul className="list">
                 {day.items.map((event) => (
-                  <EventRow key={event.id} event={event} serverNow={serverNow} />
+                  <li key={event.id}>
+                    <button className="row row--slim" onClick={() => setOpenEvent(event)}>
+                      <i className={`dot tone-${event.severity === 'alert' ? 'alert' : 'ok'}`} />
+                      <span className="row__text"><span>{title(event.type)}</span></span>
+                      <time dateTime={event.created_at}>{clock(event.created_at)}</time>
+                    </button>
+                  </li>
                 ))}
               </ul>
             </div>
           ))
         )}
       </section>
+
+      {openAlert && (
+        <Sheet title={title(openAlert)} icon={EVENT_ICON[openAlert]} tone={alertTone(openAlert)} onClose={() => setOpenAlert(null)}>
+          <p>{ALERT_HELP[openAlert]}</p>
+          {since(openAlert) && <p className="meta">Since {clock(since(openAlert)!)} · {duration(since(openAlert), serverNow)}</p>}
+          <div className="sheet__actions">
+            <button className="button button--primary" onClick={props.onOpenMap}>Show on map</button>
+          </div>
+        </Sheet>
+      )}
+      {openEvent && (
+        <Sheet
+          title={title(openEvent.type)}
+          icon={EVENT_ICON[openEvent.type]}
+          tone={openEvent.severity === 'alert' ? 'alert' : 'ok'}
+          onClose={() => setOpenEvent(null)}
+        >
+          <p>{openEvent.message}</p>
+          <p className="meta">{new Date(openEvent.created_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'medium' })}</p>
+        </Sheet>
+      )}
     </div>
   );
 }
