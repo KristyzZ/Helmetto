@@ -76,7 +76,7 @@ On a network error or 5xx just try again on the next cycle; no retry queue is ne
 | `helmet_connected` goes `true → false` | Alert **Helmet disconnected** (once) |
 | `helmet_worn` goes to `false` | Alert **Helmet not worn** (once) |
 | `crash_detected` goes to `true` | Alert **Crash detected** (once) |
-| Position leaves the parent's safe zone | Alert **Left the safe zone** (once) |
+| Position leaves the parent's safe zone (circle or drawn shape) | Alert **Left the safe zone** (once) |
 | **No telemetry at all for 30 s** | **Scooter offline** (this is not "helmet disconnected") |
 
 Alerts fire on the change only, never once per reading. The matching recovery
@@ -213,6 +213,7 @@ All scooters of the parent.
 {
   "device_id": "scooter-001",
   "name": "Demo scooter",
+  "child_name": "Emma",
   "online": true,
   "last_seen_at": "2026-01-01T12:00:00.000Z",
   "telemetry": {
@@ -226,12 +227,14 @@ All scooters of the parent.
   },
   "last_location": { "latitude": 54.6872, "longitude": 25.2797, "at": "2026-01-01T12:00:00.000Z" },
   "active_alerts": [],
-  "geofence": { "latitude": 54.6872, "longitude": 25.2797, "radius_m": 250 },
+  "geofence": { "shape": "circle", "latitude": 54.6872, "longitude": 25.2797, "radius_m": 250 },
   "zone_status": "inside",
   "server_time": "2026-01-01T12:00:03.000Z"
 }
 ```
 
+- `child_name` is the rider's name, or `null` when not set. Alert messages use it ("Emma left the safe zone.").
+- `geofence` is `null` when no zone is set; see `PUT .../geofence` below for its two shapes.
 - `online: false` with `last_seen_at: null` → the scooter has never reported.
 - `online: false` otherwise → **scooter offline**; `telemetry` is the *last known*
   reading and must not be shown as current (in particular not as "helmet disconnected").
@@ -251,7 +254,7 @@ Safety history, newest first. `before` pages further back.
       "device_id": "scooter-001",
       "type": "helmet_reconnected",
       "severity": "recovery",
-      "message": "Demo scooter: the helmet is connected again.",
+      "message": "Emma's helmet is connected again.",
       "created_at": "2026-01-01T12:01:10.000Z",
       "latitude": 54.6872,
       "longitude": 25.2797
@@ -261,7 +264,7 @@ Safety history, newest first. `before` pages further back.
       "device_id": "scooter-001",
       "type": "helmet_disconnected",
       "severity": "alert",
-      "message": "Demo scooter: the helmet is out of range or switched off while the scooter is on.",
+      "message": "Emma's helmet is out of range or switched off.",
       "created_at": "2026-01-01T12:00:40.000Z",
       "latitude": 54.6872,
       "longitude": 25.2797
@@ -276,7 +279,9 @@ Safety history, newest first. `before` pages further back.
 
 ### `PUT /api/devices/:deviceId/geofence`
 
-Set the circular safe zone. Radius 50–5000 m. Returns the new `DeviceState`.
+Set the safe zone. Returns the new `DeviceState`. Two shapes are accepted.
+
+**Circle** (the original format, unchanged). `shape` may be left out. Radius 50–5000 m.
 
 ```bash
 curl -X PUT "http://localhost:3000/api/devices/scooter-001/geofence" \
@@ -284,9 +289,57 @@ curl -X PUT "http://localhost:3000/api/devices/scooter-001/geofence" \
   -d '{"latitude":54.6872,"longitude":25.2797,"radius_m":250}'
 ```
 
+**Polygon** (a zone drawn on the map). `points` are the corners in drawing
+order; the last one connects back to the first.
+
+```bash
+curl -X PUT "http://localhost:3000/api/devices/scooter-001/geofence" \
+  -H "Content-Type: application/json" \
+  -d '{"shape":"polygon","points":[{"lat":54.6862,"lon":25.2787},{"lat":54.6862,"lon":25.2807},{"lat":54.6882,"lon":25.2807},{"lat":54.6882,"lon":25.2787}]}'
+```
+
+Polygon rules (otherwise `400 invalid_payload` with the reason in `message`):
+
+- 3 to 50 points, each with `lat` in -90..90 and `lon` in -180..180.
+- The outline must not cross or touch itself, and no point may be repeated.
+- Area of at least 400 m².
+
+The zone in every `DeviceState` looks like this:
+
+```json
+{
+  "shape": "polygon",
+  "points": [{ "lat": 54.6862, "lon": 25.2787 }, { "lat": 54.6862, "lon": 25.2807 }, { "lat": 54.6882, "lon": 25.2807 }, { "lat": 54.6882, "lon": 25.2787 }],
+  "latitude": 54.6872,
+  "longitude": 25.2797,
+  "radius_m": 128
+}
+```
+
+- `shape` is `"circle"` or `"polygon"`. If it is missing, treat the zone as a circle.
+- For a circle, `latitude` / `longitude` / `radius_m` are the centre and radius, and there is no `points`.
+- For a polygon, the server fills `latitude` / `longitude` / `radius_m` with a
+  circle that encloses the shape, so a client that only knows circles still has
+  something to draw. The alert logic uses `points`, not this circle.
+
+Alerts work the same for both shapes: **Left the safe zone** once when the
+scooter crosses out, **Back in the safe zone** once when it returns. A position
+exactly on the edge counts as inside. Readings without valid GPS are ignored.
+
 ### `DELETE /api/devices/:deviceId/geofence`
 
 Remove the safe zone. Returns the new `DeviceState`.
+
+### `PATCH /api/devices/:deviceId`
+
+Rename the scooter and/or set the child's name. Send only the fields to change.
+Names are 1–40 characters; `"child_name": null` clears it. Returns the new `DeviceState`.
+
+```bash
+curl -X PATCH "http://localhost:3000/api/devices/scooter-001" \
+  -H "Content-Type: application/json" \
+  -d '{"child_name":"Emma"}'
+```
 
 ### `GET /api/stream` (Server-Sent Events)
 
