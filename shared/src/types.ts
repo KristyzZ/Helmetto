@@ -19,12 +19,37 @@ export interface Telemetry {
   crash_detected: boolean | null;
 }
 
-/** Circular safe zone. */
+/** A map point. Used for the corners of a drawn safe zone. */
+export interface GeoPoint {
+  lat: number;
+  lon: number;
+}
+
+export type GeofenceShape = 'circle' | 'polygon';
+
+/**
+ * Safe zone, as returned by the API.
+ *
+ * - Circle (default): `latitude` / `longitude` is the centre, `radius_m` the radius.
+ * - Polygon: `shape` is "polygon" and `points` holds the corners in drawing order
+ *   (the last corner connects back to the first). `latitude`, `longitude` and
+ *   `radius_m` are then filled in by the server with a circle that encloses the
+ *   shape, so clients that only know circles still have something to show.
+ */
 export interface Geofence {
   latitude: number;
   longitude: number;
   radius_m: number;
+  /** Missing = "circle". */
+  shape?: GeofenceShape;
+  /** Corners of a polygon zone. Only present when `shape` is "polygon". */
+  points?: GeoPoint[];
 }
+
+/** Body of PUT /api/devices/:deviceId/geofence: a circle, or a drawn polygon. */
+export type GeofenceInput =
+  | { shape?: 'circle'; latitude: number; longitude: number; radius_m: number }
+  | { shape: 'polygon'; points: GeoPoint[] };
 
 /** Conditions that raise an alert while they are active. */
 export type AlertType =
@@ -72,6 +97,8 @@ export interface LastLocation {
 export interface DeviceState {
   device_id: string;
   name: string;
+  /** Name of the child who rides this scooter; null/missing = not set. */
+  child_name?: string | null;
   /**
    * Scooter sent telemetry within the last 30 s.
    * false + helmet data present means "scooter offline", NOT "helmet disconnected":
@@ -91,6 +118,13 @@ export interface DeviceState {
   zone_status: ZoneStatus;
   /** ISO 8601 server clock, so clients can show "12 s ago" without clock skew. */
   server_time: string;
+}
+
+/** Body of PATCH /api/devices/:deviceId. Send only the fields to change. */
+export interface DeviceUpdate {
+  name?: string;
+  /** null clears the name. */
+  child_name?: string | null;
 }
 
 export interface DevicesResponse {

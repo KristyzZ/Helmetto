@@ -15,6 +15,12 @@ export const HELMET_TIMEOUT_MS = 15_000;
 
 export const GEOFENCE_MIN_RADIUS_M = 50;
 export const GEOFENCE_MAX_RADIUS_M = 5_000;
+/** Drawn (polygon) zones. */
+export const GEOFENCE_MIN_POINTS = 3;
+export const GEOFENCE_MAX_POINTS = 50;
+/** Smallest drawn zone the server accepts (about 20 m x 20 m). */
+export const GEOFENCE_MIN_AREA_M2 = 400;
+export const NAME_MAX_LENGTH = 40;
 
 export const ALERT_TYPES: readonly AlertType[] = [
   'crash_detected',
