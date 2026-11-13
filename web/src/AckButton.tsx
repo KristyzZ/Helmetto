@@ -6,7 +6,8 @@ import { ago } from './time';
 
 const NAME_KEY = 'helmetto.manager';
 
-function storedName(): string | null {
+/** The name the manager last acknowledged with, if any. */
+export function storedName(): string | null {
   try {
     return localStorage.getItem(NAME_KEY);
   } catch {

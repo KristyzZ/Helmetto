@@ -11,6 +11,7 @@ import {
   type SafetyEvent,
   type SafetyEventType,
 } from '@helmetto/shared';
+import { zoneDepthMeters } from '@helmetto/ai';
 import type { IconName } from './icons';
 import { ago, duration } from './time';
 
@@ -112,6 +113,41 @@ export function gearSentence(d: DeviceState): string {
   return `${who} isn't wearing ${list}.`;
 }
 
+/** Roughly how far outside its work area the equipment is, in meters; null when unknown or inside. */
+export function metersOutside(d: DeviceState): number | null {
+  const { position } = location(d);
+  if (!position) return null;
+  const depth = zoneDepthMeters(d.geofence, { lat: position.latitude, lon: position.longitude });
+  if (depth === null || depth >= 0) return null;
+  const m = -depth;
+  return m < 100 ? Math.max(5, Math.round(m / 5) * 5) : Math.round(m / 10) * 10;
+}
+
+/**
+ * The alert as one headline and one line, saying who and where.
+ * `who` overrides the equipment's operator (e.g. the worker on the event).
+ */
+export function alertMessage(type: AlertType, d: DeviceState, who: string | null = operatorOf(d)): { title: string; line: string } {
+  const place = [d.name, d.site].filter(Boolean).join(', ');
+  switch (type) {
+    case 'geofence_exit': {
+      const far = metersOutside(d);
+      return {
+        title: `${who ?? `The ${d.name.toLowerCase()}`} left the work area`,
+        line: `${who ? `With the ${d.name.toLowerCase()}` : d.name}${d.site ? `, ${d.site}` : ''}${far ? `. About ${far}\u00a0m outside.` : '.'}`,
+      };
+    }
+    case 'unprotected_use':
+      return { title: gearSentence({ ...d, worker_name: who ?? d.worker_name }).replace(/\.$/, ''), line: `${place}.` };
+    case 'crash_detected':
+      return { title: `Check on ${who ?? 'the operator'} now`, line: `The ${d.name.toLowerCase()} reported a hard impact${d.site ? ` at ${d.site}` : ''}.` };
+    case 'scooter_offline':
+      return { title: `${d.name} went offline`, line: 'It stopped sending data, so gear and location are unknown.' };
+    default:
+      return { title: title(type), line: `${place}.` };
+  }
+}
+
 /** One short line under an alert title. */
 export function alertLine(type: AlertType, d: DeviceState): string {
   switch (type) {
@@ -120,7 +156,7 @@ export function alertLine(type: AlertType, d: DeviceState): string {
     case 'crash_detected':
       return `Check on ${operatorOf(d) ?? 'the operator'} now`;
     case 'geofence_exit':
-      return 'Outside the work area';
+      return `${operatorOf(d) ?? 'The operator'} is outside the work area`;
     case 'scooter_offline':
       return 'Not sending data';
     case 'helmet_disconnected':
@@ -178,7 +214,12 @@ export function hero(d: DeviceState, serverNow: number): Hero {
       tone: 'alert',
       icon: EVENT_ICON[top],
       title: title(top),
-      line: top === 'unprotected_use' ? gearSentence(d) : alertLine(top, d),
+      line:
+        top === 'unprotected_use'
+          ? gearSentence(d)
+          : top === 'geofence_exit'
+            ? `${who ?? 'The operator'} is ${metersOutside(d) ? `about ${metersOutside(d)}\u00a0m ` : ''}outside the work area.`
+            : alertLine(top, d),
       alert: top,
       help: ALERT_HELP[top],
     };
@@ -286,6 +327,7 @@ export function workerStatus(station: DeviceState | null): WorkerStatus {
   if (!station) return { tone: 'unknown', label: 'Not at a station', station };
   const alerts = visibleAlerts(station);
   if (alerts.includes('unprotected_use')) return { tone: 'alert', label: gearProblem(station), station };
+  if (alerts.includes('geofence_exit')) return { tone: 'alert', label: 'Outside the work area', station };
   if (alerts[0] === 'crash_detected') return { tone: 'alert', label: 'Impact detected', station };
   if (station.in_use) {
     const unknown = gearStatuses(station).some((g) => g.state === 'unknown');
@@ -357,12 +399,12 @@ export function fleetHero(devices: DeviceState[]): FleetHero {
   const first = urgent[0];
   if (first) {
     const { device, alert } = first;
-    const who = operatorOf(device);
+    const message = alertMessage(alert, device);
     return {
       tone: alertTone(alert),
       icon: EVENT_ICON[alert],
-      title: `${device.name}: ${title(alert).toLowerCase()}`,
-      line: alert === 'unprotected_use' ? gearSentence(device) : `${who ? `${who}. ` : ''}${alertLine(alert, device)}.`,
+      title: alert === 'unprotected_use' ? `${device.name}: no protection` : message.title,
+      line: alert === 'unprotected_use' ? gearSentence(device) : message.line,
       deviceId: device.device_id,
       more: urgent.length - 1,
     };

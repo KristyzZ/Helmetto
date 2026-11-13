@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { SafetyEvent } from '@helmetto/shared';
+import type { AlertType, DeviceState, SafetyEvent, Worker } from '@helmetto/shared';
 import { AddEquipment } from './AddEquipment';
+import { AlertPopups } from './AlertPopups';
 import { DemoPanel } from './DemoPanel';
 import { Icon, type IconName } from './icons';
 import { useLive } from './live';
+import { NotifyPrompt } from './NotifyPrompt';
 import { showBrowserNotification } from './notify';
 import { Alerts } from './pages/Alerts';
 import { DevicePage } from './pages/DevicePage';
@@ -12,7 +14,20 @@ import { Overview } from './pages/Overview';
 import { People, WorkerPage } from './pages/People';
 import { Report } from './pages/Report';
 import { SiteOverview } from './pages/SiteOverview';
-import { EVENT_ICON, KIND_ICON, activeEvent, alertTone, attention, deviceStatus, kindOf, location as whereIs, title } from './status';
+import {
+  EVENT_ICON,
+  KIND_ICON,
+  activeEvent,
+  alertMessage,
+  alertTone,
+  attention,
+  deviceStatus,
+  kindOf,
+  location as whereIs,
+  operatorOf,
+  title,
+  visibleAlerts,
+} from './status';
 import { useNow } from './time';
 
 type Tab = 'home' | 'people' | 'map' | 'alerts' | 'report';
@@ -26,6 +41,9 @@ const TABS: { id: Tab; label: string; icon: IconName }[] = [
 const isTab = (value: string): value is Tab => TABS.some((t) => t.id === value);
 
 const TOAST_MS = 5_000;
+const NOTIFY_DELAY_MS = 600;
+/** Desktop shows a few alerts at once; a phone shows the newest and a "more" button. */
+const MAX_POPUPS = { wide: 3, phone: 1 };
 
 interface Route {
   tab: Tab;
@@ -65,15 +83,28 @@ export function App() {
   const [adding, setAdding] = useState(false);
   const logoTaps = useRef<number[]>([]);
   const toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const view = useRef({ route, names: {} as Record<string, string> });
+  const view = useRef({ route, names: {} as Record<string, string>, devices: [] as DeviceState[], workers: [] as Worker[], wide });
+  /** New alerts waiting for someone to act on them, newest first. */
+  const [popups, setPopups] = useState<SafetyEvent[]>([]);
 
   const live = useLive((event) => {
     const name = view.current.names[event.device_id] ?? event.device_id;
-    if (event.severity === 'alert') void showBrowserNotification(`${name}: ${title(event.type)}`, event.message, `${event.device_id}:${event.type}`);
-    // Alerts are already on screen on the overview, the alerts tab and that equipment's page.
+    if (event.severity === 'alert') {
+      setPopups((list) => [event, ...list.filter((p) => !(p.device_id === event.device_id && p.type === event.type))]);
+      if (!view.current.wide) navigator.vibrate?.([250, 120, 250]);
+      // Give the device state a moment to catch up, so the text can say what is missing.
+      setTimeout(() => {
+        const device = view.current.devices.find((d) => d.device_id === event.device_id);
+        if (!device) return void showBrowserNotification(`${name}: ${title(event.type)}`, event.message, `${event.device_id}:${event.type}`);
+        const who = view.current.workers.find((w) => w.worker_id === event.worker_id)?.name ?? operatorOf(device);
+        const message = alertMessage(event.type as AlertType, device, who);
+        void showBrowserNotification(message.title, message.line, `${event.device_id}:${event.type}`);
+      }, NOTIFY_DELAY_MS);
+      return;
+    }
+    // Recoveries: a small toast, unless that equipment is already on screen.
     const r = view.current.route;
-    const onScreen = r.tab === 'alerts' || (r.tab === 'home' && (r.deviceId === null || r.deviceId === event.device_id));
-    if (event.severity === 'alert' && onScreen) return;
+    if (r.tab === 'alerts' || (r.tab === 'home' && (r.deviceId === null || r.deviceId === event.device_id))) return;
     setToast({ event, name });
     clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(null), TOAST_MS);
@@ -87,7 +118,17 @@ export function App() {
   const allEvents = Object.values(live.alerts).flat().sort((a, b) => b.id - a.id);
   const mapDevice =
     devices.find((d) => d.device_id === mapId) ?? devices.find((d) => whereIs(d).position) ?? devices[0] ?? null;
-  view.current = { route, names: Object.fromEntries(devices.map((d) => [d.device_id, d.name])) };
+  view.current = { route, names: Object.fromEntries(devices.map((d) => [d.device_id, d.name])), devices, workers: live.workers, wide };
+
+  // Popups stay until acknowledged, dismissed or resolved, and hide on that equipment's own page.
+  const openPopups = popups.flatMap((event) => {
+    const d = devices.find((x) => x.device_id === event.device_id);
+    const current = (live.alerts[event.device_id] ?? []).find((e) => e.id === event.id) ?? event;
+    if (!d || current.acknowledged_at || !visibleAlerts(d).includes(event.type as AlertType)) return [];
+    if (route.tab === 'home' && route.deviceId === d.device_id) return [];
+    const who = live.workers.find((w) => w.worker_id === event.worker_id)?.name ?? operatorOf(d);
+    return [{ event: current, device: d, who }];
+  });
 
   const navigate = useCallback((next: Route) => {
     setRoute(next);
@@ -197,6 +238,8 @@ export function App() {
         </button>
       )}
 
+      {route.tab === 'home' && !route.deviceId && <NotifyPrompt wide={wide} />}
+
       <main className="content">
         {!live.loaded ? (
           <div className="blank">
@@ -299,6 +342,16 @@ export function App() {
           <strong>{toast.name}: {title(toast.event.type)}</strong>
         </button>
       )}
+
+      <AlertPopups
+        popups={openPopups.slice(0, wide ? MAX_POPUPS.wide : MAX_POPUPS.phone)}
+        more={Math.max(0, openPopups.length - (wide ? MAX_POPUPS.wide : MAX_POPUPS.phone))}
+        serverNow={serverNow}
+        onOpen={openDevice}
+        onOpenAlerts={() => navigate({ tab: 'alerts', deviceId: null })}
+        onDismiss={(id) => setPopups((list) => list.filter((p) => p.id !== id))}
+        onAcknowledged={live.applyEvent}
+      />
 
       {!wide && <nav className="tabbar">{navItems}</nav>}
 
