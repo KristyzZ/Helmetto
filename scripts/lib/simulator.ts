@@ -1,12 +1,17 @@
 import { zoneDepthMeters } from '@helmetto/ai';
 import {
   DEVICE_KEY_HEADER,
+  EQUIPMENT_INFO,
   TELEMETRY_INTERVAL_MS,
   routes,
   type DemoScenario,
   type DeviceState,
+  type EquipmentKind,
+  type GearReading,
+  type GearType,
   type Geofence,
   type Telemetry,
+  type TelemetryAccepted,
 } from '@helmetto/shared';
 
 export interface SimulatorOptions {
@@ -15,11 +20,11 @@ export interface SimulatorOptions {
   deviceId: string;
   apiKey: string;
   intervalMs?: number;
-  /** Where the mock ride happens when no safe zone is set. */
+  /** Where the mock equipment is when it has no work area. */
   home?: { latitude: number; longitude: number };
   /**
-   * Send only what the current ESP8266 hardware can measure: helmet_connected,
-   * everything else null. Useful to see the app's "unknown" states.
+   * Send only what today's ESP8266 hardware sends: helmet_connected (one gear
+   * tag) and crash_detected, everything else null.
    */
   minimal?: boolean;
   log?: (line: string) => void;
@@ -28,12 +33,39 @@ export interface SimulatorOptions {
 /** Vilnius old town. Mock coordinates until the hardware has GPS. */
 export const DEFAULT_HOME = { latitude: 54.6872, longitude: 25.2797 };
 const DEFAULT_ZONE_RADIUS_M = 250;
-const LOOP_RADIUS_M = 120;
 const METERS_PER_DEG_LAT = 111_320;
 
+/** How each kind of equipment behaves in the simulation. */
+const BEHAVIOUR: Record<
+  EquipmentKind,
+  {
+    gps: boolean;
+    /** km/h while in use; null = the device doesn't report speed. */
+    speed: [number, number] | null;
+    /** Radius of the loop it moves on, in meters. */
+    loop: number;
+    /** The gear that goes wrong in "gear-removed", and how. */
+    removes: 'missing' | 'not_worn';
+  }
+> = {
+  power_tool: { gps: false, speed: null, loop: 0, removes: 'missing' },
+  chainsaw: { gps: true, speed: null, loop: 25, removes: 'missing' },
+  boat: { gps: true, speed: [12, 22], loop: 220, removes: 'not_worn' },
+  scooter: { gps: true, speed: [14, 20], loop: 120, removes: 'missing' },
+  other: { gps: true, speed: null, loop: 30, removes: 'missing' },
+};
+
+/** Which required item comes off in "gear-removed": the most telling one per kind. */
+const REMOVED: Partial<Record<EquipmentKind, GearType>> = {
+  power_tool: 'eye_protection',
+  chainsaw: 'chaps',
+  boat: 'life_jacket',
+};
+
 /**
- * A fake scooter. It sends real HTTP telemetry to the real endpoint with the
- * real device key, so mock data takes exactly the same path as hardware.
+ * A fake piece of equipment. It sends real HTTP telemetry to the real endpoint
+ * with the real device key, so mock data takes exactly the same path as
+ * hardware. Kind and required gear are read from the server.
  */
 export class Simulator {
   scenario: DemoScenario = 'normal';
@@ -43,17 +75,21 @@ export class Simulator {
   private timer: NodeJS.Timeout | null = null;
   private busy = false;
 
-  // ride state
+  // device profile, from the server
+  private kind: EquipmentKind = 'other';
+  private requiredGear: GearType[] = ['helmet'];
+
+  // state
   private center: { latitude: number; longitude: number };
   private zone: Geofence | null = null;
-  /** Radius of the ride loop around `center`; kept well inside the zone. */
-  private loopRadius = LOOP_RADIUS_M;
-  private angle = 0; // position on the loop, radians
-  private escapeDistance: number | null = null; // meters from center when leaving the zone
-  private helmetConnected = true;
-  private helmetWorn = true;
+  private loopRadius = 30;
+  private angle = 0;
+  private escapeDistance: number | null = null;
+  private active = true;
+  /** Gear that is off, and how. */
+  private off = new Map<GearType, 'missing' | 'not_worn'>();
+  private locked = false;
   private crashTicks = 0;
-  private stopped = false;
   private sending = true;
   private battery = 86;
 
@@ -74,52 +110,70 @@ export class Simulator {
     this.timer = null;
   }
 
+  private removedGear(): GearType {
+    const preferred = REMOVED[this.kind];
+    return preferred && this.requiredGear.includes(preferred) ? preferred : (this.requiredGear[0] ?? 'helmet');
+  }
+
   /** Switch scenario and send a reading right away so the app reacts quickly. */
   setScenario(scenario: DemoScenario): void {
     this.scenario = scenario;
     this.log(`scenario: ${scenario}`);
     this.sending = scenario !== 'offline';
-    switch (scenario) {
-      case 'normal':
-        this.helmetConnected = true;
-        this.helmetWorn = true;
-        this.crashTicks = 0;
-        this.stopped = false;
-        this.escapeDistance = null;
-        break;
-      case 'helmet-disconnect':
-        this.helmetConnected = false;
-        break;
-      case 'helmet-reconnect':
-        this.helmetConnected = true;
-        this.helmetWorn = true;
-        break;
-      case 'helmet-not-worn':
-        this.helmetConnected = true;
-        this.helmetWorn = false;
-        break;
-      case 'crash':
-        this.crashTicks = 3;
-        this.stopped = true;
-        break;
-      case 'geofence-exit':
-        this.stopped = false;
-        this.escapeDistance = -1; // placed just inside the edge on the next tick
-        break;
-      case 'offline':
-        this.log('telemetry paused: the server should report "scooter offline" after 30 s');
-        return;
+    if (scenario === 'offline') {
+      this.log('telemetry paused: the server should report "offline" after 30 s');
+      return;
     }
-    void this.syncZone().then(() => this.tick());
+    void this.syncDevice().then(() => {
+      switch (scenario) {
+        case 'normal':
+          this.active = true;
+          this.off.clear();
+          this.crashTicks = 0;
+          this.escapeDistance = null;
+          break;
+        case 'gear-removed':
+        case 'helmet-disconnect':
+          this.active = true;
+          this.off.set(this.removedGear(), BEHAVIOUR[this.kind].removes);
+          break;
+        case 'helmet-not-worn':
+          this.active = true;
+          this.off.set(this.removedGear(), 'not_worn');
+          break;
+        case 'gear-back':
+        case 'helmet-reconnect':
+          this.off.clear();
+          this.active = true;
+          break;
+        case 'idle':
+          this.active = false;
+          this.off.set(this.removedGear(), 'missing');
+          this.escapeDistance = null;
+          break;
+        case 'crash':
+          this.crashTicks = 3;
+          this.active = false;
+          break;
+        case 'geofence-exit':
+          this.active = true;
+          this.escapeDistance = -1; // placed just inside the edge on the next tick
+          break;
+      }
+      return this.tick();
+    });
   }
 
-  /** Ride inside the parent's safe zone if there is one; create one for the exit demo. */
-  private async syncZone(): Promise<void> {
-    if (this.options.minimal) return;
+  /** Read the device's kind, gear and work area; create a work area for the exit demo. */
+  private async syncDevice(): Promise<void> {
     try {
       const res = await fetch(this.options.baseUrl + routes.deviceState(this.options.deviceId));
       if (!res.ok) return;
-      let geofence: Geofence | null = ((await res.json()) as DeviceState).geofence;
+      const state = (await res.json()) as DeviceState;
+      this.kind = state.kind ?? 'other';
+      this.requiredGear = state.required_gear ?? [...EQUIPMENT_INFO[this.kind].defaultGear];
+      if (this.options.minimal || !BEHAVIOUR[this.kind].gps) return;
+      let geofence: Geofence | null = state.geofence;
       if (!geofence && this.scenario === 'geofence-exit') {
         geofence = { ...this.center, radius_m: DEFAULT_ZONE_RADIUS_M };
         await fetch(this.options.baseUrl + routes.deviceGeofence(this.options.deviceId), {
@@ -127,7 +181,7 @@ export class Simulator {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(geofence),
         });
-        this.log(`no safe zone set: created one (${DEFAULT_ZONE_RADIUS_M} m)`);
+        this.log(`no work area set: created one (${DEFAULT_ZONE_RADIUS_M} m)`);
       }
       this.useZone(geofence);
     } catch {
@@ -135,16 +189,15 @@ export class Simulator {
     }
   }
 
-  /** Pick a ride centre and loop size that fit the zone, whatever its shape. */
+  /** Pick a centre and loop size that fit the zone, whatever its shape. */
   private useZone(geofence: Geofence | null): void {
     this.zone = geofence;
+    const wanted = BEHAVIOUR[this.kind].loop;
     if (!geofence) {
-      this.loopRadius = LOOP_RADIUS_M;
+      this.loopRadius = wanted;
       return;
     }
-    // The point deepest inside the zone, searched on a grid over its enclosing
-    // circle. For a circle that is its centre; for a drawn shape it is a point
-    // safely away from every edge (the middle of an L or U is not inside it).
+    // The point deepest inside the zone, searched on a grid over its enclosing circle.
     let best = { latitude: geofence.latitude, longitude: geofence.longitude };
     let bestDepth = zoneDepthMeters(geofence, { lat: best.latitude, lon: best.longitude }) ?? 0;
     if (geofence.shape === 'polygon') {
@@ -164,10 +217,10 @@ export class Simulator {
       }
     }
     this.center = best;
-    this.loopRadius = Math.max(2, Math.min(LOOP_RADIUS_M, bestDepth * 0.5));
+    this.loopRadius = Math.max(2, Math.min(wanted, bestDepth * 0.5));
   }
 
-  /** Distance from the ride centre to the zone edge in the current riding direction. */
+  /** Distance from the centre to the zone edge in the current direction. */
   private distanceToEdge(): number {
     if (!this.zone) return DEFAULT_ZONE_RADIUS_M;
     const limit = this.zone.radius_m * 2 + 50;
@@ -184,50 +237,68 @@ export class Simulator {
     return {
       latitude: this.center.latitude + north / METERS_PER_DEG_LAT,
       longitude:
-        this.center.longitude +
-        east / (METERS_PER_DEG_LAT * Math.cos((this.center.latitude * Math.PI) / 180)),
+        this.center.longitude + east / (METERS_PER_DEG_LAT * Math.cos((this.center.latitude * Math.PI) / 180)),
     };
   }
 
+  private gear(): GearReading[] {
+    return this.requiredGear.map((type) => {
+      const off = this.off.get(type);
+      return { type, connected: off !== 'missing', worn: off === undefined ? true : off === 'not_worn' ? false : null };
+    });
+  }
+
   private nextReading(): Telemetry {
+    const running = this.active && !this.locked;
+    const gear = this.gear();
+    const allConnected = gear.every((g) => g.connected);
+    const crashing = this.crashTicks > 0;
+    if (crashing) this.crashTicks -= 1;
+
     if (this.options.minimal) {
+      // today's hardware: one tag, no motion or lock sensing
       return {
-        helmet_connected: this.helmetConnected,
+        helmet_connected: allConnected,
         helmet_worn: null,
         latitude: null,
         longitude: null,
         speed_kmh: null,
         battery_percent: null,
-        crash_detected: false,
+        crash_detected: crashing,
       };
     }
 
-    const crashing = this.crashTicks > 0;
-    if (crashing) this.crashTicks -= 1;
-    const speed = this.stopped ? 0 : Math.round((14 + Math.random() * 6) * 10) / 10;
+    const behaviour = BEHAVIOUR[this.kind];
+    const [low, high] = behaviour.speed ?? [2, 4]; // on foot when the device has no speed sensor
+    const speed = running && this.kind !== 'power_tool' ? low + Math.random() * (high - low) : 0;
     const meters = (speed / 3.6) * (this.intervalMs / 1000);
 
-    let distance: number;
-    if (this.escapeDistance !== null) {
-      // ride straight out of the zone
-      // first reading just inside the edge, then straight out
-      this.escapeDistance =
-        this.escapeDistance < 0 ? Math.max(this.distanceToEdge() - 10, 0) : this.escapeDistance + meters;
-      distance = this.escapeDistance;
-    } else {
-      // loop around the center, well inside the zone
-      distance = this.loopRadius;
-      this.angle = (this.angle + meters / distance) % (2 * Math.PI);
+    let location: { latitude: number; longitude: number } | null = null;
+    if (behaviour.gps) {
+      let distance: number;
+      if (this.escapeDistance !== null) {
+        this.escapeDistance =
+          this.escapeDistance < 0 ? Math.max(this.distanceToEdge() - 10, 0) : this.escapeDistance + Math.max(meters, 15);
+        distance = this.escapeDistance;
+      } else {
+        distance = this.loopRadius;
+        if (distance > 0) this.angle = (this.angle + meters / distance) % (2 * Math.PI);
+      }
+      location = this.position(distance);
     }
 
-    this.battery = Math.max(5, this.battery - 0.05);
+    this.battery = Math.max(5, this.battery - (running ? 0.08 : 0.01));
     return {
-      helmet_connected: this.helmetConnected,
-      helmet_worn: this.helmetConnected ? this.helmetWorn : null,
-      ...this.position(distance),
-      speed_kmh: speed,
+      helmet_connected: allConnected,
+      helmet_worn: null,
+      latitude: location?.latitude ?? null,
+      longitude: location?.longitude ?? null,
+      speed_kmh: behaviour.speed ? Math.round(speed * 10) / 10 : null,
       battery_percent: Math.round(this.battery),
       crash_detected: crashing,
+      equipment_active: running,
+      gear,
+      locked: this.locked,
     };
   }
 
@@ -242,11 +313,19 @@ export class Simulator {
         body: JSON.stringify(reading),
         signal: AbortSignal.timeout(10_000),
       });
-      const summary =
-        `helmet=${reading.helmet_connected ? 'on' : 'OFF'} worn=${reading.helmet_worn ?? 'n/a'} ` +
-        `crash=${reading.crash_detected} speed=${reading.speed_kmh ?? 'n/a'} ` +
-        `gps=${reading.latitude?.toFixed(5) ?? 'n/a'},${reading.longitude?.toFixed(5) ?? 'n/a'}`;
-      this.log(res.ok ? `-> ${res.status} ${summary}` : `-> ${res.status} ${await res.text()}`);
+      if (!res.ok) {
+        this.log(`-> ${res.status} ${await res.text()}`);
+        return;
+      }
+      // Obey the server's lock, like real lock hardware would.
+      const lock = ((await res.json()) as TelemetryAccepted).lock === true;
+      if (lock !== this.locked) this.log(lock ? 'server says LOCK: equipment locked' : 'server says unlock');
+      this.locked = lock;
+      const gear = reading.gear?.map((g) => `${g.type}=${g.connected ? (g.worn === false ? 'off' : 'on') : 'GONE'}`).join(' ');
+      this.log(
+        `-> ${res.status} ${reading.equipment_active === false ? 'idle' : 'in use'} ${gear ?? `tag=${reading.helmet_connected ? 'on' : 'GONE'}`}` +
+          (reading.latitude != null ? ` gps=${reading.latitude.toFixed(5)},${reading.longitude!.toFixed(5)}` : ''),
+      );
     } catch (error) {
       this.log(`-> request failed: ${(error as Error).message}`);
     } finally {

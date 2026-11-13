@@ -1,8 +1,9 @@
 /**
- * Mock scooter. Posts real telemetry to the real API, exactly like the hardware.
+ * Mock equipment. Posts real telemetry to the real API, exactly like the hardware.
+ * Kind and required gear come from the server (GET state).
  *
  *   npm run simulate                                  # normal ride against localhost
- *   npm run simulate -- --scenario helmet-disconnect
+ *   npm run simulate -- --scenario gear-removed
  *   npm run simulate -- --url https://your-app.onrender.com --minimal
  *
  * While it runs, press 1-7 to switch scenario, q to quit.
@@ -10,7 +11,7 @@
  */
 import path from 'node:path';
 import { parseArgs } from 'node:util';
-import { DEMO_SCENARIOS, type DemoScenario } from '@helmetto/shared';
+import { ALL_DEMO_SCENARIOS, DEMO_SCENARIOS, type DemoScenario } from '@helmetto/shared';
 import { DEFAULT_HOME, Simulator } from './lib/simulator';
 
 try {
@@ -33,18 +34,18 @@ const { values } = parseArgs({
   },
 });
 
-const scenarioIds = DEMO_SCENARIOS.map((s) => s.id);
+const scenarioIds: string[] = [...ALL_DEMO_SCENARIOS];
 
 if (values.help) {
   console.log(`Usage: npm run simulate -- [options]
 
-  -s, --scenario <name>   ${scenarioIds.join(' | ')}  (default: normal)
+  -s, --scenario <name>   ${DEMO_SCENARIOS.map((s) => s.id).join(' | ')}  (default: normal)
   -u, --url <url>         API base URL (default: SIM_URL or http://localhost:3000)
       --device-id <id>    default: DEVICE_ID or scooter-001
       --key <key>         default: DEVICE_API_KEY or the dev key
   -i, --interval <ms>     telemetry interval (default: 5000)
-      --lat, --lon        ride center when no safe zone is set (default: Vilnius)
-      --minimal           send only helmet_connected, other fields null (like today's hardware)
+      --lat, --lon        position when no work area is set (default: Vilnius)
+      --minimal           send only helmet_connected + crash_detected (like today's hardware)
 `);
   process.exit(0);
 }
@@ -71,7 +72,7 @@ const simulator = new Simulator({
   log: (line) => console.log(`${new Date().toLocaleTimeString()} ${line}`),
 });
 
-console.log(`Simulating device "${deviceId}" -> ${baseUrl}`);
+console.log(`Simulating equipment "${deviceId}" -> ${baseUrl}`);
 simulator.start(values.scenario as DemoScenario);
 
 if (process.stdin.isTTY) {
