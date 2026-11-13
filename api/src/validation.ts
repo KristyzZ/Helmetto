@@ -6,7 +6,10 @@ import {
   GEOFENCE_MIN_AREA_M2,
   GEOFENCE_MIN_POINTS,
   GEOFENCE_MIN_RADIUS_M,
+  EQUIPMENT_KINDS,
+  GEAR_TYPES,
   NAME_MAX_LENGTH,
+  WORKER_TAG_PATTERN,
   type ApiError,
   type Geofence,
 } from '@helmetto/shared';
@@ -29,6 +32,26 @@ export const telemetrySchema = z.object({
   speed_kmh: nullable(z.number().finite().min(0).max(200)),
   battery_percent: nullable(z.number().finite().min(0).max(100)),
   crash_detected: nullable(z.boolean()),
+  equipment_active: nullable(z.boolean()),
+  gear: nullable(
+    z
+      .array(
+        z.object({
+          type: z.enum(GEAR_TYPES as [string, ...string[]], { message: `type must be one of ${GEAR_TYPES.join(', ')}` }),
+          connected: z.boolean({ required_error: 'connected is required' }),
+          worn: nullable(z.boolean()),
+        }),
+      )
+      .max(12),
+  ),
+  locked: nullable(z.boolean()),
+  worker_tag: nullable(
+    z
+      .string()
+      .trim()
+      .transform((v) => v.toUpperCase())
+      .refine((v) => WORKER_TAG_PATTERN.test(v), 'worker_tag must be 1-32 letters, digits, - or _'),
+  ),
 });
 
 const circleSchema = z.object({
@@ -74,15 +97,50 @@ export const geofenceSchema = z
 
 const nameSchema = z.string().trim().min(1, 'must not be empty').max(NAME_MAX_LENGTH);
 
+const optionalName = z
+  .union([nameSchema, z.literal(''), z.null()])
+  .transform((v) => v || null)
+  .optional();
+
 export const deviceUpdateSchema = z
   .object({
     name: nameSchema.optional(),
-    child_name: z
-      .union([nameSchema, z.literal(''), z.null()])
-      .transform((v) => v || null)
-      .optional(),
+    child_name: optionalName,
+    operator_name: optionalName,
+    site: optionalName,
+    kind: z.enum(EQUIPMENT_KINDS as [string, ...string[]]).optional(),
+    required_gear: z.array(z.enum(GEAR_TYPES as [string, ...string[]])).max(GEAR_TYPES.length).optional(),
+    auto_lock: z.boolean().optional(),
+    manual_lock: z.boolean().optional(),
   })
-  .refine((v) => v.name !== undefined || v.child_name !== undefined, 'send name and/or child_name');
+  .refine((v) => Object.values(v).some((x) => x !== undefined), 'send at least one field to change');
+
+export const createDeviceSchema = z.object({
+  name: nameSchema,
+  kind: z.enum(EQUIPMENT_KINDS as [string, ...string[]]).optional(),
+  operator_name: optionalName,
+  site: optionalName,
+  required_gear: z.array(z.enum(GEAR_TYPES as [string, ...string[]])).max(GEAR_TYPES.length).optional(),
+  auto_lock: z.boolean().optional(),
+});
+
+const tagSchema = z
+  .string()
+  .trim()
+  .transform((v) => v.toUpperCase())
+  .refine((v) => WORKER_TAG_PATTERN.test(v), 'tag_id must be 1-32 letters, digits, - or _');
+
+export const createWorkerSchema = z.object({
+  name: nameSchema,
+  role: optionalName,
+  tag_id: tagSchema.optional(),
+});
+
+export const workerUpdateSchema = z
+  .object({ name: nameSchema.optional(), role: optionalName, tag_id: tagSchema.optional() })
+  .refine((v) => Object.values(v).some((x) => x !== undefined), 'send at least one field to change');
+
+export const acknowledgeSchema = z.object({ by: optionalName }).default({});
 
 export function validationError(error: z.ZodError): ApiError {
   // For a union (circle | polygon) report the branch the client was aiming for.

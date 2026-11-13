@@ -20,9 +20,14 @@ Requirements: Node 22.13+ (uses the built-in `node:sqlite`), HTTPS.
 | `NODE_ENV` | yes | `production` |
 | `DEVICE_ID` | yes | e.g. `scooter-001`. Goes into the firmware URL. |
 | `DEVICE_API_KEY` | yes | Long random string, e.g. `openssl rand -hex 24`. Goes into the firmware `X-Device-Key` header. Only its hash is stored. |
-| `DEVICE_NAME` | no | Scooter name, shown in the app. |
-| `DEVICE_CHILD_NAME` | no | The rider's name, shown in the app and in alerts. The parent can change it in the app. |
-| `DEMO_MODE` | no | `true` enables the in-app Demo panel. Off by default in production. |
+| `DEVICE_KIND` | no | `power_tool` (default), `chainsaw`, `boat`, `scooter` or `other`. Sets the default required gear. |
+| `DEVICE_NAME` | no | Equipment name, shown in the app. |
+| `DEVICE_OPERATOR` | no | Who uses it, shown in the app and in alerts. |
+| `DEVICE_SITE` | no | Where it is used. |
+| `DEVICE_AUTO_LOCK` | no | `true` to answer `lock: true` while gear is missing. |
+
+The kind, names, gear and auto-lock are only applied when the device is first created; after that they are edited in the app.
+| `DEMO_MODE` | no | `true` enables the in-app Demo panel and adds a simulated chainsaw. Off by default in production. |
 | `DATABASE_PATH` | no | Default `./data/helmetto.db`. Point at a mounted disk to keep history across deploys. |
 | `PORT` | no | Set by the host. |
 

@@ -3,19 +3,34 @@ import path from 'node:path';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { z } from 'zod';
 import {
-  DEMO_SCENARIOS,
+  ALL_DEMO_SCENARIOS,
   DEVICE_KEY_HEADER,
   ROUTE_PATTERNS,
   type AlertsResponse,
   type ApiError,
+  type DemoScenario,
+  type CreateDeviceRequest,
+  type DeviceUpdate,
   type DevicesResponse,
+  type WorkersResponse,
+  type Telemetry,
   type TelemetryAccepted,
 } from '@helmetto/shared';
 import type { Config } from './config';
 import type { Store } from './db';
 import type { DemoRunner } from './demo';
-import type { SafetyService } from './service';
-import { deviceUpdateSchema, geofenceSchema, telemetrySchema, validationError } from './validation';
+import { TagInUseError, type SafetyService } from './service';
+import {
+  acknowledgeSchema,
+  createDeviceSchema,
+  createWorkerSchema,
+  deviceUpdateSchema,
+  geofenceSchema,
+  telemetrySchema,
+  validationError,
+  workerUpdateSchema,
+} from './validation';
+import { reportCsv } from './report';
 
 const SSE_KEEPALIVE_MS = 15_000;
 
@@ -23,7 +38,9 @@ const fail = (res: Response, status: number, error: string, message: string) =>
   res.status(status).json({ error, message } satisfies ApiError);
 
 const demoSchema = z.object({
-  scenario: z.enum(['stop', ...DEMO_SCENARIOS.map((s) => s.id)] as [string, ...string[]]),
+  scenario: z.enum(['stop', 'start-all', ...ALL_DEMO_SCENARIOS] as [string, ...string[]]),
+  /** Which simulated device; default = the hardware device. */
+  device_id: z.string().optional(),
 });
 
 export function createApp(deps: {
@@ -54,8 +71,8 @@ export function createApp(deps: {
     const parsed = telemetrySchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json(validationError(parsed.error));
 
-    service.ingestTelemetry(deviceId, parsed.data);
-    res.json({ ok: true, received_at: new Date().toISOString() } satisfies TelemetryAccepted);
+    const { lock } = service.ingestTelemetry(deviceId, parsed.data as Telemetry);
+    res.json({ ok: true, received_at: new Date().toISOString(), lock } satisfies TelemetryAccepted);
   });
 
   // ---- Parent app -----------------------------------------------------------------
@@ -69,10 +86,85 @@ export function createApp(deps: {
     res.json(state);
   });
 
+  app.post(ROUTE_PATTERNS.devices, (req, res) => {
+    const parsed = createDeviceSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json(validationError(parsed.error));
+    res.status(201).json(service.createDevice(parsed.data as CreateDeviceRequest));
+  });
+
+  app.delete(ROUTE_PATTERNS.device, (req, res) => {
+    const deviceId = String(req.params.deviceId);
+    const result = service.deleteDevice(deviceId);
+    if (result === 'fixed') {
+      return fail(res, 409, 'configured_device', 'This device is configured on the server (DEVICE_ID) and comes back on restart');
+    }
+    if (result === 'not_found') return fail(res, 404, 'unknown_device', 'No such device');
+    demo?.stop(deviceId); // a simulated device that no longer exists shouldn't keep posting
+    res.status(204).end();
+  });
+
+  // ---- Workers ---------------------------------------------------------------------
+  const tagConflict = (res: Response, error: unknown) => {
+    if (error instanceof TagInUseError) return fail(res, 409, 'tag_in_use', error.message);
+    throw error;
+  };
+
+  app.get(ROUTE_PATTERNS.workers, (_req, res) => {
+    res.json({ workers: service.listWorkers() } satisfies WorkersResponse);
+  });
+
+  app.post(ROUTE_PATTERNS.workers, (req, res) => {
+    const parsed = createWorkerSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json(validationError(parsed.error));
+    try {
+      res.status(201).json(service.createWorker(parsed.data));
+    } catch (error) {
+      tagConflict(res, error);
+    }
+  });
+
+  app.patch(ROUTE_PATTERNS.worker, (req, res) => {
+    const parsed = workerUpdateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json(validationError(parsed.error));
+    try {
+      const worker = service.updateWorker(String(req.params.workerId), parsed.data);
+      if (!worker) return fail(res, 404, 'unknown_worker', 'No such worker');
+      res.json(worker);
+    } catch (error) {
+      tagConflict(res, error);
+    }
+  });
+
+  app.delete(ROUTE_PATTERNS.worker, (req, res) => {
+    if (!service.deleteWorker(String(req.params.workerId))) return fail(res, 404, 'unknown_worker', 'No such worker');
+    res.status(204).end();
+  });
+
+  app.post(ROUTE_PATTERNS.alertAck, (req, res) => {
+    const parsed = acknowledgeSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return res.status(400).json(validationError(parsed.error));
+    const event = service.acknowledge(Number(req.params.eventId), parsed.data.by ?? null);
+    if (!event) return fail(res, 404, 'unknown_alert', 'No alert with that id');
+    res.json(event);
+  });
+
+  const reportDays = (value: unknown) => Math.min(Math.max(Math.round(Number(value)) || 7, 1), 90);
+
+  app.get(ROUTE_PATTERNS.report, (req, res) => {
+    res.json(service.report(reportDays(req.query.days)));
+  });
+
+  app.get(ROUTE_PATTERNS.reportCsv, (req, res) => {
+    const report = service.report(reportDays(req.query.days));
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="helmetto-report-${report.from}-to-${report.to}.csv"`);
+    res.send(reportCsv(report));
+  });
+
   app.patch(ROUTE_PATTERNS.device, (req, res) => {
     const parsed = deviceUpdateSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json(validationError(parsed.error));
-    const state = service.updateDevice(String(req.params.deviceId), parsed.data);
+    const state = service.updateDevice(String(req.params.deviceId), parsed.data as DeviceUpdate);
     if (!state) return fail(res, 404, 'unknown_device', 'No such device');
     res.json(state);
   });
@@ -115,13 +207,25 @@ export function createApp(deps: {
 
     const onState = (state: unknown) => send('state', state);
     const onAlert = (alert: unknown) => send('alert', alert);
+    const onAlertUpdate = (event: unknown) => send('alert_update', event);
+    const onRemoved = (removed: unknown) => send('device_removed', removed);
+    const onWorker = (worker: unknown) => send('worker', worker);
+    const onWorkerRemoved = (removed: unknown) => send('worker_removed', removed);
     service.on('state', onState);
     service.on('alert', onAlert);
+    service.on('alert_update', onAlertUpdate);
+    service.on('device_removed', onRemoved);
+    service.on('worker', onWorker);
+    service.on('worker_removed', onWorkerRemoved);
     const keepalive = setInterval(() => res.write(': keepalive\n\n'), SSE_KEEPALIVE_MS);
     req.on('close', () => {
       clearInterval(keepalive);
       service.off('state', onState);
       service.off('alert', onAlert);
+      service.off('alert_update', onAlertUpdate);
+      service.off('device_removed', onRemoved);
+      service.off('worker', onWorker);
+      service.off('worker_removed', onWorkerRemoved);
     });
   });
 
@@ -134,8 +238,12 @@ export function createApp(deps: {
     if (!demo || !config.demoMode) return fail(res, 403, 'demo_disabled', 'Start the server with DEMO_MODE=true');
     const parsed = demoSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json(validationError(parsed.error));
-    const { scenario } = parsed.data;
-    res.json(scenario === 'stop' ? demo.stop() : demo.run(scenario as never));
+    const { scenario, device_id } = parsed.data;
+    if (scenario === 'stop') return res.json(demo.stop(device_id));
+    if (scenario === 'start-all') return res.json(demo.startAll());
+    const status = demo.run(scenario as DemoScenario, device_id);
+    if (!status) return fail(res, 404, 'unknown_device', 'The demo cannot simulate that device');
+    res.json(status);
   });
 
   app.use('/api', (_req, res) => fail(res, 404, 'not_found', 'No such API route'));

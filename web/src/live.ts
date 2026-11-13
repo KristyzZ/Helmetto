@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { routes, type DeviceState, type DevicesResponse, type SafetyEvent } from '@helmetto/shared';
+import { routes, type DeviceState, type DevicesResponse, type SafetyEvent, type Worker } from '@helmetto/shared';
 import { api } from './api';
 
 /**
@@ -19,6 +19,13 @@ export interface Live {
   clockOffsetMs: number;
   /** Apply a state returned by a write (e.g. geofence save) without waiting for the stream. */
   applyState: (state: DeviceState) => void;
+  /** Apply an updated event (e.g. acknowledged) or a removed device without waiting for the stream. */
+  applyEvent: (event: SafetyEvent) => void;
+  removeDevice: (deviceId: string) => void;
+  /** People whose gear carries a worker tag, by name. */
+  workers: Worker[];
+  applyWorker: (worker: Worker) => void;
+  removeWorker: (workerId: string) => void;
 }
 
 const POLL_FAST_MS = 4_000; // while the stream is down
@@ -31,6 +38,13 @@ export function useLive(onNewEvent: (event: SafetyEvent) => void): Live {
   const [devices, setDevices] = useState<DeviceState[]>([]);
   const [alerts, setAlerts] = useState<Record<string, SafetyEvent[]>>({});
   const [clockOffsetMs, setClockOffsetMs] = useState(0);
+  const [workers, setWorkers] = useState<Worker[]>([]);
+
+  const applyWorker = (worker: Worker) =>
+    setWorkers((list) =>
+      [...list.filter((w) => w.worker_id !== worker.worker_id), worker].sort((a, b) => a.name.localeCompare(b.name)),
+    );
+  const removeWorker = (workerId: string) => setWorkers((list) => list.filter((w) => w.worker_id !== workerId));
 
   const onNewEventRef = useRef(onNewEvent);
   onNewEventRef.current = onNewEvent;
@@ -48,6 +62,20 @@ export function useLive(onNewEvent: (event: SafetyEvent) => void): Live {
     });
   };
 
+  const applyEvent = (event: SafetyEvent) =>
+    setAlerts((all) => ({
+      ...all,
+      [event.device_id]: (all[event.device_id] ?? []).map((x) => (x.id === event.id ? event : x)),
+    }));
+
+  const removeDevice = (deviceId: string) => {
+    setDevices((list) => list.filter((d) => d.device_id !== deviceId));
+    setAlerts((all) => {
+      const { [deviceId]: _removed, ...rest } = all;
+      return rest;
+    });
+  };
+
   useEffect(() => {
     let disposed = false;
     let streamOpen = false;
@@ -58,10 +86,13 @@ export function useLive(onNewEvent: (event: SafetyEvent) => void): Live {
       seen.current[deviceId] = Math.max(known ?? 0, ...incoming.map((e) => e.id));
       setAlerts((all) => {
         const existing = all[deviceId] ?? [];
-        const ids = new Set(existing.map((e) => e.id));
-        const added = incoming.filter((e) => !ids.has(e.id));
-        if (added.length === 0 && all[deviceId]) return all;
-        return { ...all, [deviceId]: [...added, ...existing].sort((a, b) => b.id - a.id) };
+        const byId = new Map(incoming.map((e) => [e.id, e]));
+        const added = incoming.filter((e) => !existing.some((x) => x.id === e.id));
+        // Existing events may have changed (acknowledged): take the incoming copy.
+        const changed = existing.some((x) => byId.has(x.id) && byId.get(x.id)!.acknowledged_at !== x.acknowledged_at);
+        if (added.length === 0 && !changed && all[deviceId]) return all;
+        const merged = existing.map((x) => byId.get(x.id) ?? x);
+        return { ...all, [deviceId]: [...added, ...merged].sort((a, b) => b.id - a.id) };
       });
       fresh.sort((a, b) => a.id - b.id).forEach((e) => onNewEventRef.current(e));
     };
@@ -75,9 +106,10 @@ export function useLive(onNewEvent: (event: SafetyEvent) => void): Live {
 
     const refresh = async () => {
       try {
-        const response = await api.devices();
+        const [response, people] = await Promise.all([api.devices(), api.workers()]);
         if (disposed) return;
         applyDevices(response);
+        setWorkers(people.workers);
         await Promise.all(
           response.devices.map(async (d) => mergeAlerts(d.device_id, (await api.alerts(d.device_id)).alerts)),
         );
@@ -113,6 +145,13 @@ export function useLive(onNewEvent: (event: SafetyEvent) => void): Live {
         if (seen.current[event.device_id] === undefined) seen.current[event.device_id] = event.id - 1;
         mergeAlerts(event.device_id, [event]);
       });
+      source.addEventListener('alert_update', (e) => {
+        const event = JSON.parse((e as MessageEvent).data) as SafetyEvent;
+        mergeAlerts(event.device_id, [event]);
+      });
+      source.addEventListener('device_removed', (e) => removeDevice(JSON.parse((e as MessageEvent).data).device_id));
+      source.addEventListener('worker', (e) => applyWorker(JSON.parse((e as MessageEvent).data)));
+      source.addEventListener('worker_removed', (e) => removeWorker(JSON.parse((e as MessageEvent).data).worker_id));
       source.addEventListener('error', () => {
         // EventSource reconnects by itself; polling covers the gap
         streamOpen = false;
@@ -133,5 +172,5 @@ export function useLive(onNewEvent: (event: SafetyEvent) => void): Live {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return { loaded, connection, devices, alerts, clockOffsetMs, applyState };
+  return { loaded, connection, devices, alerts, clockOffsetMs, applyState, applyEvent, removeDevice, workers, applyWorker, removeWorker };
 }

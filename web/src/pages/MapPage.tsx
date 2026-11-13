@@ -27,7 +27,7 @@ function problem(draft: Draft): { text: string; invalid: boolean } | null {
   if (n === 0) return { text: 'Tap the map to add corners', invalid: false };
   if (n < GEOFENCE_MIN_POINTS) return { text: `Add ${GEOFENCE_MIN_POINTS - n} more corner${GEOFENCE_MIN_POINTS - n > 1 ? 's' : ''}`, invalid: false };
   if (!isSimplePolygon(draft.points)) return { text: "Lines can't cross. Move a corner.", invalid: true };
-  if (polygonAreaM2(draft.points) < GEOFENCE_MIN_AREA_M2) return { text: 'Zone is too small', invalid: true };
+  if (polygonAreaM2(draft.points) < GEOFENCE_MIN_AREA_M2) return { text: 'Area is too small', invalid: true };
   return null;
 }
 
@@ -124,20 +124,20 @@ export function MapPage(props: { device: DeviceState; serverNow: number; onSaved
           </div>
           <div className="map-bottom">
             {position && !follow && (
-              <button className="fab" onClick={() => setFollow(true)} aria-label="Centre on scooter">
+              <button className="fab" onClick={() => setFollow(true)} aria-label="Centre on equipment">
                 <Icon name="target" />
               </button>
             )}
             <button className="button button--primary button--float" onClick={start}>
               <Icon name="draw" size={18} />
-              {saved ? 'Edit zone' : 'Draw zone'}
+              {saved ? 'Edit work area' : 'Draw work area'}
             </button>
           </div>
         </>
       )}
 
       {draft && (
-        <div className="editor" role="dialog" aria-label="Safe zone">
+        <div className="editor" role="dialog" aria-label="Work area">
           <div className="editor__head">
             <div className="segmented" role="tablist">
               <button role="tab" aria-selected={draft.shape === 'polygon'} onClick={() => { setHistory([]); setDraft(polygonDraft()); }}>
@@ -158,7 +158,7 @@ export function MapPage(props: { device: DeviceState; serverNow: number; onSaved
             </p>
             {saved && (
               <button className="text-button text-button--danger" disabled={busy} onClick={() => finish(() => api.clearGeofence(device.device_id))}>
-                Remove zone
+                Remove area
               </button>
             )}
           </div>

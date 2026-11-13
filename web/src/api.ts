@@ -5,7 +5,15 @@ import {
   type DemoScenario,
   type DemoStatus,
   type DeviceState,
+  type CreateDeviceRequest,
+  type CreateDeviceResponse,
   type DeviceUpdate,
+  type ReportResponse,
+  type SafetyEvent,
+  type CreateWorkerRequest,
+  type Worker,
+  type WorkersResponse,
+  type WorkerUpdate,
   type DevicesResponse,
   type GeofenceInput,
 } from '@helmetto/shared';
@@ -39,6 +47,21 @@ export const api = {
     request<DeviceState>(routes.deviceGeofence(deviceId), { method: 'DELETE' }),
   updateDevice: (deviceId: string, update: DeviceUpdate) =>
     request<DeviceState>(routes.device(deviceId), json('PATCH', update)),
+  createDevice: (input: CreateDeviceRequest) => request<CreateDeviceResponse>(routes.devices(), json('POST', input)),
+  deleteDevice: async (deviceId: string) => {
+    const res = await fetch(routes.device(deviceId), { method: 'DELETE' });
+    if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as ApiError).message || `Request failed (${res.status})`);
+  },
+  acknowledge: (eventId: number, by: string | null) => request<SafetyEvent>(routes.alertAck(eventId), json('POST', { by })),
+  report: (days: number) => request<ReportResponse>(routes.report(days)),
+  workers: () => request<WorkersResponse>(routes.workers()),
+  createWorker: (input: CreateWorkerRequest) => request<Worker>(routes.workers(), json('POST', input)),
+  updateWorker: (workerId: string, update: WorkerUpdate) => request<Worker>(routes.worker(workerId), json('PATCH', update)),
+  deleteWorker: async (workerId: string) => {
+    const res = await fetch(routes.worker(workerId), { method: 'DELETE' });
+    if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as ApiError).message || `Request failed (${res.status})`);
+  },
   demoStatus: () => request<DemoStatus>(routes.demo()),
-  runDemo: (scenario: DemoScenario | 'stop') => request<DemoStatus>(routes.demo(), json('POST', { scenario })),
+  runDemo: (scenario: DemoScenario | 'stop' | 'start-all', deviceId?: string) =>
+    request<DemoStatus>(routes.demo(), json('POST', { scenario, device_id: deviceId })),
 };

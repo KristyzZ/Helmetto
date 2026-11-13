@@ -1,13 +1,13 @@
 {
   "name": "Helmetto",
   "short_name": "Helmetto",
-  "description": "Helmet, crash and safe-zone alerts for your child's e-scooter.",
+  "description": "Protective gear check for power tools, chainsaws and boats.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#f5f5f3",
-  "theme_color": "#f5f5f3",
+  "background_color": "#eceef1",
+  "theme_color": "#eceef1",
   "icons": [
     { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
     { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },

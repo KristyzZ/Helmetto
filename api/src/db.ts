@@ -3,7 +3,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { NO_CONDITIONS, type Conditions } from '@helmetto/ai';
-import type { Geofence, LastLocation, SafetyEvent, Telemetry } from '@helmetto/shared';
+import {
+  EQUIPMENT_INFO,
+  type EquipmentKind,
+  type GearType,
+  type Geofence,
+  type LastLocation,
+  type SafetyEvent,
+  type Telemetry,
+  type Worker,
+} from '@helmetto/shared';
 
 export const DEMO_PARENT_ID = 'parent-demo';
 
@@ -39,13 +48,63 @@ CREATE TABLE IF NOT EXISTS events (
   longitude REAL
 );
 CREATE INDEX IF NOT EXISTS events_by_device ON events(device_id, id DESC);
+CREATE TABLE IF NOT EXISTS daily_stats (
+  device_id TEXT NOT NULL,
+  day TEXT NOT NULL,
+  in_use_s REAL NOT NULL DEFAULT 0,
+  unprotected_s REAL NOT NULL DEFAULT 0,
+  incidents INTEGER NOT NULL DEFAULT 0,
+  missed TEXT NOT NULL DEFAULT '{}',
+  PRIMARY KEY (device_id, day)
+);
+CREATE TABLE IF NOT EXISTS workers (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  role TEXT,
+  tag_id TEXT NOT NULL UNIQUE,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS worker_daily_stats (
+  device_id TEXT NOT NULL, -- holds the worker id; same shape as daily_stats
+  day TEXT NOT NULL,
+  in_use_s REAL NOT NULL DEFAULT 0,
+  unprotected_s REAL NOT NULL DEFAULT 0,
+  incidents INTEGER NOT NULL DEFAULT 0,
+  missed TEXT NOT NULL DEFAULT '{}',
+  PRIMARY KEY (device_id, day)
+);
 `;
+
+/** Event columns added after the first release. */
+const ADDED_EVENT_COLUMNS: Record<string, string> = {
+  acknowledged_at: 'INTEGER',
+  acknowledged_by: 'TEXT',
+  worker_id: 'TEXT',
+};
 
 /** Columns added after the first release; applied to existing databases on start. */
 const ADDED_COLUMNS: Record<string, string> = {
-  child_name: 'TEXT',
+  child_name: 'TEXT', // the operator's name
+  kind: 'TEXT',
+  site: 'TEXT',
+  required_gear: 'TEXT', // JSON GearType[]
+  auto_lock: 'INTEGER',
+  manual_lock: 'INTEGER',
   geofence_points: 'TEXT', // JSON [{lat, lon}], set for polygon zones only
 };
+
+export interface SeedDevice {
+  id: string;
+  apiKey: string;
+  name: string;
+  childName?: string | null;
+  kind?: EquipmentKind;
+  site?: string | null;
+  requiredGear?: GearType[];
+  autoLock?: boolean;
+  /** Circle work area set when the device is created. */
+  geofence?: { latitude: number; longitude: number; radius_m: number } | null;
+}
 
 export const hashKey = (key: string) => createHash('sha256').update(key).digest('hex');
 
@@ -54,7 +113,14 @@ export interface DeviceRow {
   id: string;
   parentId: string;
   name: string;
+  /** The operator (worker, skipper, rider). Stored in the child_name column. */
   childName: string | null;
+  kind: EquipmentKind;
+  site: string | null;
+  requiredGear: GearType[];
+  autoLock: boolean;
+  /** Locked by a manager from the app. */
+  manualLock: boolean;
   lastSeenAt: number | null;
   telemetry: Telemetry | null;
   conditions: Conditions;
@@ -70,6 +136,13 @@ function toDevice(raw: Raw): DeviceRow {
     parentId: raw.parent_id,
     name: raw.name,
     childName: raw.child_name ?? null,
+    kind: (raw.kind as EquipmentKind) ?? 'other',
+    site: raw.site ?? null,
+    requiredGear: raw.required_gear
+      ? JSON.parse(raw.required_gear)
+      : [...EQUIPMENT_INFO[(raw.kind as EquipmentKind) ?? 'other'].defaultGear],
+    autoLock: raw.auto_lock === 1,
+    manualLock: raw.manual_lock === 1,
     lastSeenAt: raw.last_seen_at ?? null,
     telemetry: raw.telemetry ? JSON.parse(raw.telemetry) : null,
     conditions: raw.conditions ? { ...NO_CONDITIONS, ...JSON.parse(raw.conditions) } : { ...NO_CONDITIONS },
@@ -101,7 +174,32 @@ function toEvent(raw: Raw): SafetyEvent {
     created_at: new Date(raw.created_at).toISOString(),
     latitude: raw.latitude ?? null,
     longitude: raw.longitude ?? null,
+    acknowledged_at: raw.acknowledged_at ? new Date(raw.acknowledged_at).toISOString() : null,
+    acknowledged_by: raw.acknowledged_by ?? null,
+    worker_id: raw.worker_id ?? null,
   };
+}
+
+function toWorker(raw: Raw): Worker {
+  return {
+    worker_id: raw.id,
+    name: raw.name,
+    role: raw.role ?? null,
+    tag_id: raw.tag_id,
+    created_at: new Date(raw.created_at).toISOString(),
+  };
+}
+
+type StatsTable = 'daily_stats' | 'worker_daily_stats';
+
+/** One device's numbers for one day. */
+export interface DayStats {
+  device_id: string;
+  day: string;
+  in_use_s: number;
+  unprotected_s: number;
+  incidents: number;
+  missed: Partial<Record<GearType, number>>;
 }
 
 export class Store {
@@ -117,6 +215,10 @@ export class Store {
     for (const [column, type] of Object.entries(ADDED_COLUMNS)) {
       if (!existing.has(column)) this.db.exec(`ALTER TABLE devices ADD COLUMN ${column} ${type}`);
     }
+    const eventColumns = new Set((this.db.prepare('PRAGMA table_info(events)').all() as Raw[]).map((c) => c.name));
+    for (const [column, type] of Object.entries(ADDED_EVENT_COLUMNS)) {
+      if (!eventColumns.has(column)) this.db.exec(`ALTER TABLE events ADD COLUMN ${column} ${type}`);
+    }
     this.db
       .prepare('INSERT OR IGNORE INTO parents (id, name) VALUES (?, ?)')
       .run(DEMO_PARENT_ID, 'Demo parent');
@@ -124,20 +226,39 @@ export class Store {
 
   /**
    * Create the device, or refresh its key from env. Only the key hash is stored.
-   * Names are set when the device is created; after that the parent's edits win.
+   * Names, kind, gear and settings are only set when the device is created;
+   * after that the manager's edits win.
    */
-  seedDevice(
-    device: { id: string; apiKey: string; name: string; childName?: string | null },
-    parentId = DEMO_PARENT_ID,
-  ): void {
+  seedDevice(device: SeedDevice, parentId = DEMO_PARENT_ID): void {
+    const kind = device.kind ?? 'other';
     this.db
       .prepare(
-        `INSERT INTO devices (id, parent_id, name, child_name, api_key_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)
+        `INSERT INTO devices (id, parent_id, name, child_name, kind, site, required_gear, auto_lock, api_key_hash, created_at,
+           geofence_lat, geofence_lon, geofence_radius_m)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            api_key_hash = excluded.api_key_hash,
-           child_name = COALESCE(devices.child_name, excluded.child_name)`,
+           child_name = COALESCE(devices.child_name, excluded.child_name),
+           kind = COALESCE(devices.kind, excluded.kind),
+           site = COALESCE(devices.site, excluded.site),
+           required_gear = COALESCE(devices.required_gear, excluded.required_gear),
+           auto_lock = COALESCE(devices.auto_lock, excluded.auto_lock)`,
       )
-      .run(device.id, parentId, device.name, device.childName ?? null, hashKey(device.apiKey), Date.now());
+      .run(
+        device.id,
+        parentId,
+        device.name,
+        device.childName ?? null,
+        kind,
+        device.site ?? null,
+        JSON.stringify(device.requiredGear ?? EQUIPMENT_INFO[kind].defaultGear),
+        device.autoLock ? 1 : 0,
+        hashKey(device.apiKey),
+        Date.now(),
+        device.geofence?.latitude ?? null,
+        device.geofence?.longitude ?? null,
+        device.geofence?.radius_m ?? null,
+      );
   }
 
   verifyDeviceKey(deviceId: string, key: string): 'ok' | 'unknown_device' | 'bad_key' {
@@ -163,7 +284,7 @@ export class Store {
   saveDevice(device: DeviceRow): void {
     this.db
       .prepare(
-        `UPDATE devices SET name = ?, child_name = ?, last_seen_at = ?, telemetry = ?, conditions = ?,
+        `UPDATE devices SET name = ?, child_name = ?, kind = ?, site = ?, required_gear = ?, auto_lock = ?, manual_lock = ?, last_seen_at = ?, telemetry = ?, conditions = ?,
            last_lat = ?, last_lon = ?, last_location_at = ?,
            geofence_lat = ?, geofence_lon = ?, geofence_radius_m = ?, geofence_points = ?
          WHERE id = ?`,
@@ -171,6 +292,11 @@ export class Store {
       .run(
         device.name,
         device.childName,
+        device.kind,
+        device.site,
+        JSON.stringify(device.requiredGear),
+        device.autoLock ? 1 : 0,
+        device.manualLock ? 1 : 0,
         device.lastSeenAt,
         device.telemetry ? JSON.stringify(device.telemetry) : null,
         JSON.stringify(device.conditions),
@@ -188,8 +314,8 @@ export class Store {
   addEvent(event: Omit<SafetyEvent, 'id' | 'created_at'> & { created_at: number }): SafetyEvent {
     const result = this.db
       .prepare(
-        `INSERT INTO events (device_id, type, severity, message, created_at, latitude, longitude)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO events (device_id, type, severity, message, created_at, latitude, longitude, worker_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         event.device_id,
@@ -199,6 +325,7 @@ export class Store {
         event.created_at,
         event.latitude,
         event.longitude,
+        event.worker_id ?? null,
       );
     return { ...event, id: Number(result.lastInsertRowid), created_at: new Date(event.created_at).toISOString() };
   }
@@ -221,6 +348,106 @@ export class Store {
       this.db.exec('ROLLBACK');
       throw error;
     }
+  }
+
+  getEvent(eventId: number): SafetyEvent | null {
+    const row = this.db.prepare('SELECT * FROM events WHERE id = ?').get(eventId) as Raw | undefined;
+    return row ? toEvent(row) : null;
+  }
+
+  /** Mark an event as seen. Acknowledging twice keeps the first time. */
+  acknowledgeEvent(eventId: number, by: string | null, at: number): SafetyEvent | null {
+    this.db
+      .prepare('UPDATE events SET acknowledged_at = COALESCE(acknowledged_at, ?), acknowledged_by = COALESCE(acknowledged_by, ?) WHERE id = ?')
+      .run(at, by, eventId);
+    return this.getEvent(eventId);
+  }
+
+  /** Add time and incidents to one device's day. */
+  addDayStats(deviceId: string, day: string, delta: Omit<DayStats, 'device_id' | 'day'>, table: StatsTable = 'daily_stats'): void {
+    const row = this.db.prepare(`SELECT missed FROM ${table} WHERE device_id = ? AND day = ?`).get(deviceId, day) as Raw | undefined;
+    const missed: Record<string, number> = row ? JSON.parse(row.missed) : {};
+    for (const [type, count] of Object.entries(delta.missed)) missed[type] = (missed[type] ?? 0) + (count ?? 0);
+    this.db
+      .prepare(
+        `INSERT INTO ${table} (device_id, day, in_use_s, unprotected_s, incidents, missed) VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(device_id, day) DO UPDATE SET
+           in_use_s = in_use_s + excluded.in_use_s,
+           unprotected_s = unprotected_s + excluded.unprotected_s,
+           incidents = incidents + excluded.incidents,
+           missed = excluded.missed`,
+      )
+      .run(deviceId, day, delta.in_use_s, delta.unprotected_s, delta.incidents, JSON.stringify(missed));
+  }
+
+  /** For worker_daily_stats, device_id holds the worker id. */
+  listDayStats(fromDay: string, table: StatsTable = 'daily_stats'): DayStats[] {
+    const rows = this.db.prepare(`SELECT * FROM ${table} WHERE day >= ? ORDER BY day`).all(fromDay) as Raw[];
+    return rows.map((r) => ({
+      device_id: r.device_id,
+      day: r.day,
+      in_use_s: r.in_use_s,
+      unprotected_s: r.unprotected_s,
+      incidents: r.incidents,
+      missed: JSON.parse(r.missed),
+    }));
+  }
+
+  deviceExists(deviceId: string): boolean {
+    return !!this.db.prepare('SELECT 1 FROM devices WHERE id = ?').get(deviceId);
+  }
+
+  /** Remove a device with its history and stats. */
+  deleteDevice(deviceId: string): boolean {
+    return this.transaction(() => {
+      this.db.prepare('DELETE FROM events WHERE device_id = ?').run(deviceId);
+      this.db.prepare('DELETE FROM daily_stats WHERE device_id = ?').run(deviceId);
+      return Number(this.db.prepare('DELETE FROM devices WHERE id = ?').run(deviceId).changes) > 0;
+    });
+  }
+
+  /** Remove simulated devices (ids starting with "demo-") that are no longer configured. */
+  pruneDemoDevices(keep: readonly string[]): string[] {
+    const rows = this.db.prepare("SELECT id FROM devices WHERE id LIKE 'demo-%'").all() as Raw[];
+    const removed = rows.map((r) => r.id as string).filter((id) => !keep.includes(id));
+    for (const id of removed) this.deleteDevice(id);
+    return removed;
+  }
+
+  listWorkers(): Worker[] {
+    return (this.db.prepare('SELECT * FROM workers ORDER BY name COLLATE NOCASE, id').all() as Raw[]).map(toWorker);
+  }
+
+  getWorker(workerId: string): Worker | null {
+    const row = this.db.prepare('SELECT * FROM workers WHERE id = ?').get(workerId) as Raw | undefined;
+    return row ? toWorker(row) : null;
+  }
+
+  workerByTag(tagId: string): Worker | null {
+    const row = this.db.prepare('SELECT * FROM workers WHERE tag_id = ?').get(tagId.toUpperCase()) as Raw | undefined;
+    return row ? toWorker(row) : null;
+  }
+
+  /** Insert, or do nothing if the id or tag exists (demo seeding). */
+  insertWorker(worker: { id: string; name: string; role: string | null; tagId: string }, ifMissing = false): Worker {
+    this.db
+      .prepare(`INSERT ${ifMissing ? 'OR IGNORE ' : ''}INTO workers (id, name, role, tag_id, created_at) VALUES (?, ?, ?, ?, ?)`)
+      .run(worker.id, worker.name, worker.role, worker.tagId.toUpperCase(), Date.now());
+    return this.getWorker(worker.id)!;
+  }
+
+  updateWorker(workerId: string, fields: { name: string; role: string | null; tagId: string }): Worker | null {
+    this.db
+      .prepare('UPDATE workers SET name = ?, role = ?, tag_id = ? WHERE id = ?')
+      .run(fields.name, fields.role, fields.tagId.toUpperCase(), workerId);
+    return this.getWorker(workerId);
+  }
+
+  deleteWorker(workerId: string): boolean {
+    return this.transaction(() => {
+      this.db.prepare('DELETE FROM worker_daily_stats WHERE device_id = ?').run(workerId);
+      return Number(this.db.prepare('DELETE FROM workers WHERE id = ?').run(workerId).changes) > 0;
+    });
   }
 
   close(): void {
