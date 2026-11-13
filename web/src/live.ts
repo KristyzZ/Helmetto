@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { routes, type DeviceState, type DevicesResponse, type SafetyEvent } from '@helmetto/shared';
+import { routes, type DeviceState, type DevicesResponse, type SafetyEvent, type Worker } from '@helmetto/shared';
 import { api } from './api';
 
 /**
@@ -22,6 +22,10 @@ export interface Live {
   /** Apply an updated event (e.g. acknowledged) or a removed device without waiting for the stream. */
   applyEvent: (event: SafetyEvent) => void;
   removeDevice: (deviceId: string) => void;
+  /** People whose gear carries a worker tag, by name. */
+  workers: Worker[];
+  applyWorker: (worker: Worker) => void;
+  removeWorker: (workerId: string) => void;
 }
 
 const POLL_FAST_MS = 4_000; // while the stream is down
@@ -34,6 +38,13 @@ export function useLive(onNewEvent: (event: SafetyEvent) => void): Live {
   const [devices, setDevices] = useState<DeviceState[]>([]);
   const [alerts, setAlerts] = useState<Record<string, SafetyEvent[]>>({});
   const [clockOffsetMs, setClockOffsetMs] = useState(0);
+  const [workers, setWorkers] = useState<Worker[]>([]);
+
+  const applyWorker = (worker: Worker) =>
+    setWorkers((list) =>
+      [...list.filter((w) => w.worker_id !== worker.worker_id), worker].sort((a, b) => a.name.localeCompare(b.name)),
+    );
+  const removeWorker = (workerId: string) => setWorkers((list) => list.filter((w) => w.worker_id !== workerId));
 
   const onNewEventRef = useRef(onNewEvent);
   onNewEventRef.current = onNewEvent;
@@ -95,9 +106,10 @@ export function useLive(onNewEvent: (event: SafetyEvent) => void): Live {
 
     const refresh = async () => {
       try {
-        const response = await api.devices();
+        const [response, people] = await Promise.all([api.devices(), api.workers()]);
         if (disposed) return;
         applyDevices(response);
+        setWorkers(people.workers);
         await Promise.all(
           response.devices.map(async (d) => mergeAlerts(d.device_id, (await api.alerts(d.device_id)).alerts)),
         );
@@ -138,6 +150,8 @@ export function useLive(onNewEvent: (event: SafetyEvent) => void): Live {
         mergeAlerts(event.device_id, [event]);
       });
       source.addEventListener('device_removed', (e) => removeDevice(JSON.parse((e as MessageEvent).data).device_id));
+      source.addEventListener('worker', (e) => applyWorker(JSON.parse((e as MessageEvent).data)));
+      source.addEventListener('worker_removed', (e) => removeWorker(JSON.parse((e as MessageEvent).data).worker_id));
       source.addEventListener('error', () => {
         // EventSource reconnects by itself; polling covers the gap
         streamOpen = false;
@@ -158,5 +172,5 @@ export function useLive(onNewEvent: (event: SafetyEvent) => void): Live {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return { loaded, connection, devices, alerts, clockOffsetMs, applyState, applyEvent, removeDevice };
+  return { loaded, connection, devices, alerts, clockOffsetMs, applyState, applyEvent, removeDevice, workers, applyWorker, removeWorker };
 }

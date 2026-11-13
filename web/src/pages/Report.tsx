@@ -123,6 +123,31 @@ export function Report({ events }: { events: SafetyEvent[] }) {
             </ul>
           </section>
 
+          {(report.workers?.length ?? 0) > 0 && (
+            <section>
+              <h2 className="label">By person</h2>
+              <ul className="list">
+                {report.workers!.map((w) => {
+                  const wTone = complianceTone(w.compliance);
+                  return (
+                    <li key={w.worker_id} className="rrow">
+                      <Icon name="badge" size={20} />
+                      <span className="rrow__text">
+                        <strong>{w.name}</strong>
+                        <small>
+                          {w.in_use_s > 0 ? `${formatDuration(w.in_use_s)} working` : 'No work recorded'}
+                          {w.incidents > 0 && ` · ${w.incidents} incident${w.incidents > 1 ? 's' : ''}`}
+                        </small>
+                        <span className="meter"><span className={`meter__fill tone-${wTone}`} style={{ width: `${(w.compliance ?? 0) * 100}%` }} /></span>
+                      </span>
+                      <span className={`rrow__pct tone-${wTone}`}>{pct(w.compliance)}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          )}
+
           {missed.length > 0 && (
             <section>
               <h2 className="label">Most often missing</h2>

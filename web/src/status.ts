@@ -54,7 +54,8 @@ export const alertTone = (type: AlertType): Tone => (type === 'scooter_offline' 
 
 export const kindOf = (d: DeviceState): EquipmentKind => d.kind ?? 'other';
 export const kindInfo = (d: DeviceState) => EQUIPMENT_INFO[kindOf(d)];
-export const operatorOf = (d: DeviceState) => (d.operator_name ?? d.child_name)?.trim() || null;
+/** Who is using it: the worker identified by their gear tags, else the usual operator. */
+export const operatorOf = (d: DeviceState) => (d.worker_name ?? d.operator_name ?? d.child_name)?.trim() || null;
 export const hasReported = (d: DeviceState) => d.last_seen_at !== null;
 export const requiredGear = (d: DeviceState): GearType[] => d.required_gear ?? [...kindInfo(d).defaultGear];
 export const gearStatuses = (d: DeviceState): GearStatus[] =>
@@ -278,6 +279,26 @@ export function chips(d: DeviceState, serverNow: number): Chip[] {
 /** The event that started an active alert: its newest occurrence. */
 export function activeEvent(events: readonly SafetyEvent[], type: AlertType): SafetyEvent | null {
   return events.find((e) => e.type === type) ?? null;
+}
+
+export interface WorkerStatus {
+  tone: Tone;
+  label: string;
+  /** The equipment they are at; null = not at any station. */
+  station: DeviceState | null;
+}
+
+/** One line about a person: where they are and whether they are protected. */
+export function workerStatus(station: DeviceState | null): WorkerStatus {
+  if (!station) return { tone: 'unknown', label: 'Not at a station', station };
+  const alerts = visibleAlerts(station);
+  if (alerts.includes('unprotected_use')) return { tone: 'alert', label: gearProblem(station), station };
+  if (alerts[0] === 'crash_detected') return { tone: 'alert', label: 'Impact detected', station };
+  if (station.in_use) {
+    const unknown = gearStatuses(station).some((g) => g.state === 'unknown');
+    return { tone: 'ok', label: unknown ? 'Working, tagged gear on' : 'Working, protected', station };
+  }
+  return { tone: 'unknown', label: `At station · ${kindInfo(station).idle.toLowerCase()}`, station };
 }
 
 /** "45 s", "12 min", "3 h 20 min" */

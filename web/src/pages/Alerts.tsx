@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { AlertType, DeviceState, SafetyEvent } from '@helmetto/shared';
+import type { AlertType, DeviceState, SafetyEvent, Worker } from '@helmetto/shared';
 import { AckButton } from '../AckButton';
 import { Icon } from '../icons';
 import { notifyPermission, requestNotifyPermission, type NotifyPermission } from '../notify';
@@ -44,6 +44,7 @@ function Notifications() {
 
 export function Alerts(props: {
   devices: DeviceState[];
+  workers: Worker[];
   alerts: Record<string, SafetyEvent[]>;
   serverNow: number;
   onOpenDevice: (deviceId: string) => void;
@@ -53,6 +54,7 @@ export function Alerts(props: {
   const [openEvent, setOpenEvent] = useState<SafetyEvent | null>(null);
   const [openAlert, setOpenAlert] = useState<{ device: DeviceState; type: AlertType } | null>(null);
   const names = Object.fromEntries(devices.map((d) => [d.device_id, d.name]));
+  const people = Object.fromEntries(props.workers.map((w) => [w.worker_id, w.name]));
   const active = attention(devices);
   const events = Object.values(alerts).flat().sort((a, b) => b.id - a.id).slice(0, 200);
   const since = (deviceId: string, type: AlertType) => alerts[deviceId]?.find((e) => e.type === type)?.created_at ?? null;
@@ -116,7 +118,10 @@ export function Alerts(props: {
                       <i className={`dot tone-${event.severity === 'alert' ? 'alert' : 'ok'}`} />
                       <span className="row__text">
                         <span>{title(event.type)}</span>
-                        <small>{names[event.device_id] ?? event.device_id}</small>
+                        <small>
+                          {names[event.device_id] ?? event.device_id}
+                          {event.worker_id && people[event.worker_id] ? ` · ${people[event.worker_id]}` : ''}
+                        </small>
                       </span>
                       <time dateTime={event.created_at}>{clock(event.created_at)}</time>
                     </button>

@@ -9,13 +9,15 @@ import { Alerts } from './pages/Alerts';
 import { DevicePage } from './pages/DevicePage';
 import { MapPage } from './pages/MapPage';
 import { Overview } from './pages/Overview';
+import { People, WorkerPage } from './pages/People';
 import { Report } from './pages/Report';
 import { EVENT_ICON, KIND_ICON, activeEvent, alertTone, attention, deviceStatus, kindOf, location as whereIs, title } from './status';
 import { useNow } from './time';
 
-type Tab = 'home' | 'map' | 'alerts' | 'report';
+type Tab = 'home' | 'people' | 'map' | 'alerts' | 'report';
 const TABS: { id: Tab; label: string; icon: IconName }[] = [
   { id: 'home', label: 'Equipment', icon: 'grid' },
+  { id: 'people', label: 'People', icon: 'users' },
   { id: 'map', label: 'Map', icon: 'map' },
   { id: 'alerts', label: 'Alerts', icon: 'bell' },
   { id: 'report', label: 'Report', icon: 'chart' },
@@ -28,11 +30,14 @@ interface Route {
   tab: Tab;
   /** Equipment page open on the home tab. */
   deviceId: string | null;
+  /** Person page open on the people tab. */
+  workerId?: string | null;
 }
 
 function readHash(): Route {
   const hash = decodeURIComponent(location.hash.slice(1));
   if (hash.startsWith('device/')) return { tab: 'home', deviceId: hash.slice(7) };
+  if (hash.startsWith('worker/')) return { tab: 'people', deviceId: null, workerId: hash.slice(7) };
   return { tab: isTab(hash) ? hash : 'home', deviceId: null };
 }
 
@@ -62,16 +67,27 @@ export function App() {
   const serverNow = now + live.clockOffsetMs;
   const devices = live.devices;
   const device = route.deviceId ? devices.find((d) => d.device_id === route.deviceId) ?? null : null;
+  const worker = route.workerId ? live.workers.find((w) => w.worker_id === route.workerId) ?? null : null;
+  const allEvents = Object.values(live.alerts).flat().sort((a, b) => b.id - a.id);
   const mapDevice =
     devices.find((d) => d.device_id === mapId) ?? devices.find((d) => whereIs(d).position) ?? devices[0] ?? null;
   view.current = { route, names: Object.fromEntries(devices.map((d) => [d.device_id, d.name])) };
 
   const navigate = useCallback((next: Route) => {
     setRoute(next);
-    history.replaceState(null, '', next.deviceId ? `#device/${encodeURIComponent(next.deviceId)}` : `#${next.tab}`);
+    history.replaceState(
+      null,
+      '',
+      next.deviceId
+        ? `#device/${encodeURIComponent(next.deviceId)}`
+        : next.workerId
+          ? `#worker/${encodeURIComponent(next.workerId)}`
+          : `#${next.tab}`,
+    );
     window.scrollTo(0, 0);
   }, []);
   const openDevice = (deviceId: string) => navigate({ tab: 'home', deviceId });
+  const openWorker = (workerId: string) => navigate({ tab: 'people', deviceId: null, workerId });
 
   // hidden demo panel: five quick taps on the logo
   const tapLogo = () => {
@@ -162,7 +178,24 @@ export function App() {
             onSaved={live.applyState}
             onEvent={live.applyEvent}
             onRemoved={removed}
+            onOpenWorker={openWorker}
           />
+        ) : route.tab === 'people' && worker ? (
+          <WorkerPage
+            worker={worker}
+            devices={devices}
+            events={allEvents}
+            serverNow={serverNow}
+            onBack={() => navigate({ tab: 'people', deviceId: null })}
+            onOpenDevice={openDevice}
+            onSaved={live.applyWorker}
+            onRemoved={(workerId) => {
+              live.removeWorker(workerId);
+              navigate({ tab: 'people', deviceId: null });
+            }}
+          />
+        ) : route.tab === 'people' ? (
+          <People workers={live.workers} devices={devices} onOpen={openWorker} onSaved={live.applyWorker} />
         ) : route.tab === 'home' ? (
           <Overview devices={devices} alerts={live.alerts} serverNow={serverNow} onOpen={openDevice} onAdd={() => setAdding(true)} />
         ) : route.tab === 'map' && mapDevice ? (
@@ -182,9 +215,9 @@ export function App() {
             <MapPage key={mapDevice.device_id} device={mapDevice} serverNow={serverNow} onSaved={live.applyState} />
           </>
         ) : route.tab === 'report' ? (
-          <Report events={Object.values(live.alerts).flat().sort((a, b) => b.id - a.id)} />
+          <Report events={allEvents} />
         ) : (
-          <Alerts devices={devices} alerts={live.alerts} serverNow={serverNow} onOpenDevice={openDevice} onEvent={live.applyEvent} />
+          <Alerts devices={devices} workers={live.workers} alerts={live.alerts} serverNow={serverNow} onOpenDevice={openDevice} onEvent={live.applyEvent} />
         )}
       </main>
 

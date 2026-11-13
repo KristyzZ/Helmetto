@@ -39,6 +39,7 @@ export function DevicePage(props: {
   onSaved: (state: DeviceState) => void;
   onEvent: (event: SafetyEvent) => void;
   onRemoved: (deviceId: string) => void;
+  onOpenWorker: (workerId: string) => void;
 }) {
   const { device, events, serverNow } = props;
   const [detail, setDetail] = useState<Detail | null>(null);
@@ -104,6 +105,17 @@ export function DevicePage(props: {
             </li>
           ))}
         </ul>
+      )}
+
+      {device.worker_id && device.worker_name && (
+        <button className="row row--card" onClick={() => props.onOpenWorker(device.worker_id!)}>
+          <Icon name="badge" size={20} />
+          <span className="row__text">
+            <small>At this station now</small>
+            <strong>{device.worker_name}</strong>
+          </span>
+          <Icon name="chevron" size={16} />
+        </button>
       )}
 
       <section>
