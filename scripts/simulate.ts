@@ -30,6 +30,8 @@ const { values } = parseArgs({
     lat: { type: 'string' },
     lon: { type: 'string' },
     minimal: { type: 'boolean', default: false },
+    worker: { type: 'string', short: 'w' },
+    'other-worker': { type: 'string' },
     help: { type: 'boolean', short: 'h', default: false },
   },
 });
@@ -46,6 +48,8 @@ if (values.help) {
   -i, --interval <ms>     telemetry interval (default: 5000)
       --lat, --lon        position when no work area is set (default: Vilnius)
       --minimal           send only helmet_connected + crash_detected (like today's hardware)
+  -w, --worker <tag>      worker tag ID the gear sends, e.g. TAG-0001
+      --other-worker <tag> who takes over in the switch-worker scenario
 `);
   process.exit(0);
 }
@@ -69,6 +73,11 @@ const simulator = new Simulator({
     longitude: values.lon ? Number(values.lon) : DEFAULT_HOME.longitude,
   },
   minimal: values.minimal,
+  workerTags: values.worker
+    ? values['other-worker']
+      ? [values.worker, values['other-worker']]
+      : [values.worker]
+    : undefined,
   log: (line) => console.log(`${new Date().toLocaleTimeString()} ${line}`),
 });
 

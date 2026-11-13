@@ -27,6 +27,11 @@ export interface SimulatorOptions {
    * tag) and crash_detected, everything else null.
    */
   minimal?: boolean;
+  /**
+   * Worker tag IDs the gear sends: [usual worker, the one "switch-worker" swaps to].
+   * Left out = no worker identification.
+   */
+  workerTags?: [string, string] | [string];
   log?: (line: string) => void;
 }
 
@@ -91,6 +96,10 @@ export class Simulator {
   private locked = false;
   private crashTicks = 0;
   private sending = true;
+  /** Index into workerTags of the worker at the equipment. */
+  private workerIndex = 0;
+  /** Someone is at the equipment (false after "idle": gear put away, nobody there). */
+  private present = true;
   private battery = 86;
 
   constructor(private options: SimulatorOptions) {
@@ -127,6 +136,7 @@ export class Simulator {
     void this.syncDevice().then(() => {
       switch (scenario) {
         case 'normal':
+          this.present = true;
           this.active = true;
           this.off.clear();
           this.crashTicks = 0;
@@ -134,6 +144,7 @@ export class Simulator {
           break;
         case 'gear-removed':
         case 'helmet-disconnect':
+          this.present = true;
           this.active = true;
           this.off.set(this.removedGear(), BEHAVIOUR[this.kind].removes);
           break;
@@ -143,14 +154,25 @@ export class Simulator {
           break;
         case 'gear-back':
         case 'helmet-reconnect':
+          this.present = true;
           this.off.clear();
           this.active = true;
           break;
         case 'idle':
+          this.present = false;
           this.active = false;
           this.off.set(this.removedGear(), 'missing');
           this.escapeDistance = null;
           break;
+        case 'switch-worker': {
+          const tags = this.options.workerTags ?? [];
+          if (tags.length > 1) this.workerIndex = (this.workerIndex + 1) % tags.length;
+          this.log(`worker at the equipment: ${tags[this.workerIndex] ?? 'none'}`);
+          this.present = true;
+          this.active = true;
+          this.off.clear();
+          break;
+        }
         case 'crash':
           this.crashTicks = 3;
           this.active = false;
@@ -248,6 +270,10 @@ export class Simulator {
     });
   }
 
+  private workerTag(): string | null {
+    return this.present ? (this.options.workerTags?.[this.workerIndex] ?? null) : null;
+  }
+
   private nextReading(): Telemetry {
     const running = this.active && !this.locked;
     const gear = this.gear();
@@ -265,6 +291,7 @@ export class Simulator {
         speed_kmh: null,
         battery_percent: null,
         crash_detected: crashing,
+        ...(this.options.workerTags ? { worker_tag: this.workerTag() } : {}),
       };
     }
 
@@ -299,6 +326,7 @@ export class Simulator {
       equipment_active: running,
       gear,
       locked: this.locked,
+      worker_tag: this.workerTag(),
     };
   }
 
@@ -324,6 +352,7 @@ export class Simulator {
       const gear = reading.gear?.map((g) => `${g.type}=${g.connected ? (g.worn === false ? 'off' : 'on') : 'GONE'}`).join(' ');
       this.log(
         `-> ${res.status} ${reading.equipment_active === false ? 'idle' : 'in use'} ${gear ?? `tag=${reading.helmet_connected ? 'on' : 'GONE'}`}` +
+          (reading.worker_tag ? ` worker=${reading.worker_tag}` : '') +
           (reading.latitude != null ? ` gps=${reading.latitude.toFixed(5)},${reading.longitude!.toFixed(5)}` : ''),
       );
     } catch (error) {
