@@ -11,6 +11,7 @@ import { MapPage } from './pages/MapPage';
 import { Overview } from './pages/Overview';
 import { People, WorkerPage } from './pages/People';
 import { Report } from './pages/Report';
+import { SiteOverview } from './pages/SiteOverview';
 import { EVENT_ICON, KIND_ICON, activeEvent, alertTone, attention, deviceStatus, kindOf, location as whereIs, title } from './status';
 import { useNow } from './time';
 
@@ -41,7 +42,22 @@ function readHash(): Route {
   return { tab: isTab(hash) ? hash : 'home', deviceId: null };
 }
 
+const WIDE_QUERY = '(min-width: 1100px)';
+
+/** True on laptop and desktop screens, where Helmetto shows the dashboard layout. */
+function useWide(): boolean {
+  const [wide, setWide] = useState(() => window.matchMedia(WIDE_QUERY).matches);
+  useEffect(() => {
+    const media = window.matchMedia(WIDE_QUERY);
+    const onChange = () => setWide(media.matches);
+    media.addEventListener('change', onChange);
+    return () => media.removeEventListener('change', onChange);
+  }, []);
+  return wide;
+}
+
 export function App() {
+  const wide = useWide();
   const [route, setRoute] = useState<Route>(readHash);
   const [mapId, setMapId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ event: SafetyEvent; name: string } | null>(null);
@@ -123,18 +139,47 @@ export function App() {
     : !down && device ? urgent.find((u) => u.device.device_id !== device.device_id)
     : undefined;
 
+  const connection = (
+    <span className="state topbar__link" title={`Server connection: ${live.connection}`}>
+      <i className={`dot tone-${live.connection === 'live' ? 'ok' : down ? 'alert' : 'warn'} ${live.connection === 'live' ? 'dot--pulse' : ''}`} />
+      {live.connection === 'live' ? 'Live' : down ? 'No connection' : 'Connecting'}
+    </span>
+  );
+  const logo = (
+    <button className="logo" onClick={tapLogo} aria-label="Helmetto, all equipment">
+      <img src="/icon.svg" alt="" width="28" height="28" />
+      <span>Helmetto</span>
+    </button>
+  );
+  const navItems = TABS.map((item) => (
+    <button
+      key={item.id}
+      className="tab"
+      onClick={() => navigate({ tab: item.id, deviceId: null })}
+      aria-current={route.tab === item.id ? 'page' : undefined}
+    >
+      <span className="tab__icon">
+        <Icon name={item.icon} />
+        {item.id === 'alerts' && alertCount > 0 && <b className="badge tone-alert">{alertCount}</b>}
+      </span>
+      {wide && item.id === 'home' ? 'Overview' : item.label}
+    </button>
+  ));
+
   return (
-    <div className={`app app--${route.tab}`}>
-      <header className="topbar">
-        <button className="logo" onClick={tapLogo} aria-label="Helmetto, all equipment">
-          <img src="/icon.svg" alt="" width="28" height="28" />
-          <span>Helmetto</span>
-        </button>
-        <span className="state topbar__link" title={`Server connection: ${live.connection}`}>
-          <i className={`dot tone-${live.connection === 'live' ? 'ok' : down ? 'alert' : 'warn'} ${live.connection === 'live' ? 'dot--pulse' : ''}`} />
-          {live.connection === 'live' ? 'Live' : down ? 'No connection' : 'Connecting'}
-        </span>
-      </header>
+    <div className={`app app--${route.tab} ${wide ? 'app--wide' : ''} ${route.deviceId || route.workerId ? 'app--detail' : ''}`}>
+      {wide ? (
+        <aside className="sidebar">
+          {logo}
+          <nav className="sidebar__nav" aria-label="Main">{navItems}</nav>
+          <div className="sidebar__foot">{connection}</div>
+        </aside>
+      ) : (
+        <header className="topbar">
+          {logo}
+          {connection}
+        </header>
+      )}
 
       {down && (
         <div className="strip tone-warn" role="status">
@@ -196,6 +241,19 @@ export function App() {
           />
         ) : route.tab === 'people' ? (
           <People workers={live.workers} devices={devices} onOpen={openWorker} onSaved={live.applyWorker} />
+        ) : route.tab === 'home' && wide ? (
+          <SiteOverview
+            devices={devices}
+            workers={live.workers}
+            alerts={live.alerts}
+            events={allEvents}
+            serverNow={serverNow}
+            onOpenDevice={openDevice}
+            onOpenWorker={openWorker}
+            onOpenAlerts={() => navigate({ tab: 'alerts', deviceId: null })}
+            onOpenReport={() => navigate({ tab: 'report', deviceId: null })}
+            onAdd={() => setAdding(true)}
+          />
         ) : route.tab === 'home' ? (
           <Overview
             devices={devices}
@@ -242,22 +300,7 @@ export function App() {
         </button>
       )}
 
-      <nav className="tabbar">
-        {TABS.map((item) => (
-          <button
-            key={item.id}
-            className="tab"
-            onClick={() => navigate({ tab: item.id, deviceId: null })}
-            aria-current={route.tab === item.id ? 'page' : undefined}
-          >
-            <span className="tab__icon">
-              <Icon name={item.icon} />
-              {item.id === 'alerts' && alertCount > 0 && <b className="badge tone-alert">{alertCount}</b>}
-            </span>
-            {item.label}
-          </button>
-        ))}
-      </nav>
+      {!wide && <nav className="tabbar">{navItems}</nav>}
 
       {demoOpen && <DemoPanel devices={devices} onClose={() => setDemoOpen(false)} />}
       {adding && (

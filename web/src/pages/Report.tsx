@@ -43,7 +43,7 @@ export function Report({ events }: { events: SafetyEvent[] }) {
   const maxDay = Math.max(1, ...(report?.days.map((d) => d.in_use_s) ?? [1]));
 
   return (
-    <div className="page">
+    <div className="page page--report">
       <div className="page__row">
         <h1 className="page__title">Report</h1>
         <div className="segmented" role="tablist" aria-label="Period">

@@ -7,7 +7,7 @@ import { StatusHead } from '../StatusHead';
 import { activeEvent, attention, deviceStatus, fleetHero, kindOf, KIND_ICON, subtitle } from '../status';
 import { ago } from '../time';
 
-function EquipmentBoard({ device, serverNow, onOpen }: { device: DeviceState; serverNow: number; onOpen: () => void }) {
+export function EquipmentBoard({ device, serverNow, onOpen }: { device: DeviceState; serverNow: number; onOpen: () => void }) {
   const status = deviceStatus(device);
   return (
     <button className={`board board--${status.tone}`} onClick={onOpen}>

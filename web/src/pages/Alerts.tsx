@@ -68,7 +68,7 @@ export function Alerts(props: {
   }
 
   return (
-    <div className="page">
+    <div className="page page--alerts">
       <h1 className="page__title">Alerts</h1>
 
       <section>

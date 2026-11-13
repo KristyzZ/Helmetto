@@ -67,7 +67,7 @@ export function DevicePage(props: {
   };
 
   return (
-    <div className="page">
+    <div className="page page--device">
       <div className="page-head">
         <button className="icon-button" onClick={props.onBack} aria-label="Back to all equipment">
           <Icon name="back" size={22} />

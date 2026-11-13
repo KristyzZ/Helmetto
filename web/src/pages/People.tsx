@@ -143,7 +143,7 @@ export function People(props: {
   const working = rows.filter((r) => r.status.station).length;
 
   return (
-    <div className="page">
+    <div className="page page--people">
       <h1 className="page__title">People</h1>
 
       <div className="tally">
@@ -233,7 +233,7 @@ export function WorkerPage(props: {
           : { tone: 'unknown', icon: 'power' as const, title: 'At a station', line: `${station.name} is not in use` };
 
   return (
-    <div className="page">
+    <div className="page page--person">
       <div className="page-head">
         <button className="icon-button" onClick={props.onBack} aria-label="Back to all people">
           <Icon name="back" size={22} />
