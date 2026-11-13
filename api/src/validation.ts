@@ -103,8 +103,20 @@ export const deviceUpdateSchema = z
     kind: z.enum(EQUIPMENT_KINDS as [string, ...string[]]).optional(),
     required_gear: z.array(z.enum(GEAR_TYPES as [string, ...string[]])).max(GEAR_TYPES.length).optional(),
     auto_lock: z.boolean().optional(),
+    manual_lock: z.boolean().optional(),
   })
   .refine((v) => Object.values(v).some((x) => x !== undefined), 'send at least one field to change');
+
+export const createDeviceSchema = z.object({
+  name: nameSchema,
+  kind: z.enum(EQUIPMENT_KINDS as [string, ...string[]]).optional(),
+  operator_name: optionalName,
+  site: optionalName,
+  required_gear: z.array(z.enum(GEAR_TYPES as [string, ...string[]])).max(GEAR_TYPES.length).optional(),
+  auto_lock: z.boolean().optional(),
+});
+
+export const acknowledgeSchema = z.object({ by: optionalName }).default({});
 
 export function validationError(error: z.ZodError): ApiError {
   // For a union (circle | polygon) report the branch the client was aiming for.

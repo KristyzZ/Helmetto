@@ -11,6 +11,8 @@ const config = loadConfig();
 const store = new Store(config.databasePath);
 store.seedDevice(config.device);
 for (const device of config.demoDevices) store.seedDevice(device);
+// Simulated devices that are no longer part of the demo (e.g. the boat) are removed.
+store.pruneDemoDevices(config.demoDevices.map((d) => d.id));
 
 const service = new SafetyService(store, { offlineTimeoutMs: config.offlineTimeoutMs });
 const demo = new DemoRunner(config);

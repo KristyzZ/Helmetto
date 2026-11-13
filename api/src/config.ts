@@ -11,7 +11,7 @@ export interface Config {
   databasePath: string;
   /** The hardware device, seeded on startup from env. */
   device: SeedDevice;
-  /** Extra simulated devices (demo mode only): a forestry chainsaw and a boat. */
+  /** Extra simulated devices (demo mode only): a forestry chainsaw. */
   demoDevices: SeedDevice[];
   demoMode: boolean;
   offlineTimeoutMs: number;
@@ -32,15 +32,6 @@ const DEMO_DEVICES: Omit<SeedDevice, 'apiKey'>[] = [
     site: 'Pavilniai forest',
     autoLock: true,
     geofence: { latitude: 54.6745, longitude: 25.329, radius_m: 150 },
-  },
-  {
-    id: 'demo-boat',
-    name: 'Fishing boat',
-    kind: 'boat',
-    childName: 'Rūta',
-    site: 'Lake Galvė',
-    autoLock: false,
-    geofence: { latitude: 54.661, longitude: 24.939, radius_m: 600 },
   },
 ];
 

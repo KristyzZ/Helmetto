@@ -1,6 +1,6 @@
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { AlertsResponse, DeviceState, DevicesResponse } from '@helmetto/shared';
+import type { AlertsResponse, CreateDeviceResponse, DeviceState, DevicesResponse, ReportResponse, SafetyEvent } from '@helmetto/shared';
 import { createApp } from '../src/app';
 import type { Config } from '../src/config';
 import { Store } from '../src/db';
@@ -338,6 +338,97 @@ describe('equipment and gear', () => {
     await patch({ required_gear: ['helmet', 'chaps'] });
     expect((await state()).active_alerts).toEqual([]);
     await patch({ kind: 'other', operator_name: null, site: null, required_gear: ['helmet'], auto_lock: false });
+  });
+});
+
+describe('new features', () => {
+  const json = (method: string, url: string, body?: unknown) =>
+    fetch(`${base}${url}`, { method, headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
+  let created: CreateDeviceResponse;
+  const postAs = (key: string, body: unknown) =>
+    fetch(`${base}/api/devices/${created.device.device_id}/telemetry`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Device-Key': key },
+      body: JSON.stringify(body),
+    });
+
+  it('registers new equipment and shows its key once', async () => {
+    const res = await json('POST', '/api/devices', { name: 'Angle grinder 2', kind: 'power_tool', operator_name: 'Jonas', site: 'Workshop B' });
+    expect(res.status).toBe(201);
+    created = (await res.json()) as CreateDeviceResponse;
+    expect(created.device.device_id).toMatch(/^angle-grinder-2-[0-9a-f]{4}$/);
+    expect(created.api_key).toMatch(/^[0-9a-f]{48}$/);
+    expect(created.device.required_gear).toEqual(['eye_protection', 'ear_protection', 'gloves']);
+    expect((await postAs(created.api_key, reading())).status).toBe(200);
+    expect((await postAs('wrong', reading())).status).toBe(401);
+    const { devices } = (await (await fetch(`${base}/api/devices`)).json()) as DevicesResponse;
+    expect(devices.some((d) => d.device_id === created.device.device_id)).toBe(true);
+    expect(JSON.stringify(devices)).not.toContain(created.api_key);
+  });
+
+  it('rejects a nameless device', async () => {
+    expect((await json('POST', '/api/devices', { kind: 'chainsaw' })).status).toBe(400);
+  });
+
+  it('counts protected and unprotected time and incidents in the report', async () => {
+    const id = created.device.device_id;
+    const gear = (gloves: boolean) => [
+      { type: 'eye_protection', connected: true },
+      { type: 'ear_protection', connected: true },
+      { type: 'gloves', connected: gloves },
+    ];
+    await postAs(created.api_key, reading({ equipment_active: true, gear: gear(true) }));
+    now += 5_000;
+    await postAs(created.api_key, reading({ equipment_active: true, gear: gear(false) })); // 5 s protected
+    now += 5_000;
+    await postAs(created.api_key, reading({ equipment_active: true, gear: gear(false) })); // 5 s unprotected
+    now += 5_000;
+    await postAs(created.api_key, reading({ equipment_active: false, gear: gear(true) })); // 5 s unprotected
+    now += 60_000;
+    await postAs(created.api_key, reading({ equipment_active: false, gear: gear(true) })); // off: nothing
+
+    const report = (await (await fetch(`${base}/api/report?days=7`)).json()) as ReportResponse;
+    const mine = report.devices.find((d) => d.device_id === id)!;
+    expect(mine).toMatchObject({ in_use_s: 15, unprotected_s: 10, incidents: 1, missed: { gloves: 1 } });
+    expect(mine.compliance).toBeCloseTo(1 / 3, 5);
+    expect(report.days).toHaveLength(7);
+    expect(report.totals.in_use_s).toBeGreaterThanOrEqual(15);
+
+    const csv = await (await fetch(`${base}/api/report.csv?days=7`)).text();
+    expect(csv).toContain('Angle grinder 2,Power tool,Jonas,0.00,0.00,33.3,1,Gloves x1');
+    expect(csv.split('\r\n')[1]).toContain('Hours in use');
+  });
+
+  it('acknowledges an alert once, and only alerts', async () => {
+    const { alerts } = (await (await fetch(`${base}/api/devices/${created.device.device_id}/alerts`)).json()) as AlertsResponse;
+    const alert = alerts.find((a) => a.type === 'unprotected_use')!;
+    const recovery = alerts.find((a) => a.type === 'protection_restored')!;
+    const first = (await (await json('POST', `/api/alerts/${alert.id}/acknowledge`, { by: 'Kipras' })).json()) as SafetyEvent;
+    expect(first.acknowledged_by).toBe('Kipras');
+    expect(first.acknowledged_at).toBeTruthy();
+    const again = (await (await json('POST', `/api/alerts/${alert.id}/acknowledge`, { by: 'Someone else' })).json()) as SafetyEvent;
+    expect(again.acknowledged_by).toBe('Kipras');
+    expect((await json('POST', `/api/alerts/${recovery.id}/acknowledge`, {})).status).toBe(404);
+    expect((await json('POST', '/api/alerts/999999/acknowledge', {})).status).toBe(404);
+  });
+
+  it('locks and unlocks from the app; a manual lock is not an alert', async () => {
+    const id = created.device.device_id;
+    const locked = (await (await json('PATCH', `/api/devices/${id}`, { manual_lock: true })).json()) as DeviceState;
+    expect(locked).toMatchObject({ manual_lock: true, lock_engaged: true });
+    const res = await postAs(created.api_key, reading({ equipment_active: false, locked: true }));
+    expect(((await res.json()) as { lock: boolean }).lock).toBe(true);
+    expect((await (await fetch(`${base}/api/devices/${id}/state`)).json() as DeviceState).active_alerts).toEqual([]);
+    await json('PATCH', `/api/devices/${id}`, { manual_lock: false });
+    const res2 = await postAs(created.api_key, reading({ equipment_active: false }));
+    expect(((await res2.json()) as { lock: boolean }).lock).toBe(false);
+  });
+
+  it('removes equipment, but not the one configured on the server', async () => {
+    expect((await json('DELETE', '/api/devices/test-scooter')).status).toBe(409);
+    expect((await json('DELETE', `/api/devices/${created.device.device_id}`)).status).toBe(204);
+    expect((await fetch(`${base}/api/devices/${created.device.device_id}/state`)).status).toBe(404);
+    expect((await json('DELETE', `/api/devices/${created.device.device_id}`)).status).toBe(404);
   });
 });
 

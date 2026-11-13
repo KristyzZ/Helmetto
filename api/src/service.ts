@@ -1,8 +1,14 @@
+import { randomBytes } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import {
   activeAlerts,
   checkGeofence,
   checkProtection,
+  dayOf,
+  emptyStats,
+  exposureBetween,
+  lastDays,
+  sumStats,
   evaluateGeofenceChange,
   evaluateHeartbeat,
   evaluateProfileChange,
@@ -16,19 +22,37 @@ import {
   EVENT_INFO,
   GEAR_INFO,
   type DeviceState,
+  type CreateDeviceRequest,
+  type CreateDeviceResponse,
+  type DeviceReport,
   type DeviceUpdate,
   type GearType,
+  type ReportResponse,
+  type ReportStats,
   type Geofence,
   type SafetyEvent,
   type SafetyEventType,
   type Telemetry,
 } from '@helmetto/shared';
-import type { DeviceRow, Store } from './db';
+import { DEMO_PARENT_ID, type DayStats, type DeviceRow, type Store } from './db';
 
 export const profileOf = (device: DeviceRow): EquipmentProfile => ({
   requiredGear: device.requiredGear,
   autoLock: device.autoLock,
+  manualLock: device.manualLock,
 });
+
+/** "Angle grinder 2" -> "angle-grinder-2-3f9a" */
+function newDeviceId(name: string): string {
+  const slug = name
+    .normalize('NFKD')
+    .replace(/[^\w\s-]/g, '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/g, '-')
+    .slice(0, 24);
+  return `${slug || 'device'}-${randomBytes(2).toString('hex')}`;
+}
 
 /** "chaps", "chaps and gloves", "chaps, gloves and ear defenders" */
 function gearList(types: readonly GearType[]): string {
@@ -48,7 +72,7 @@ function message(type: SafetyEventType, device: DeviceRow): string {
   switch (type) {
     case 'unprotected_use': {
       const missing = gearList(check?.unsafe ?? []);
-      const locked = check?.lock ? ' Locked until it is back.' : '';
+      const locked = check?.gearLock ? ' Locked until it is back.' : '';
       if (device.kind === 'boat') return `${subject}: under way without ${missing} on.${locked}`;
       return `${subject}: ${kind.inUse.toLowerCase()} without ${missing}.${locked}`;
     }
@@ -111,7 +135,8 @@ export class SafetyService extends EventEmitter {
       gear_status: check?.gear ?? device.requiredGear.map((type) => ({ type, state: 'unknown' as const })),
       in_use: check ? check.inUse : null,
       auto_lock: device.autoLock,
-      lock_engaged: check?.lock ?? false,
+      lock_engaged: check?.lock ?? device.manualLock,
+      manual_lock: device.manualLock,
       online,
       last_seen_at: device.lastSeenAt === null ? null : new Date(device.lastSeenAt).toISOString(),
       telemetry: t,
@@ -167,6 +192,22 @@ export class SafetyService extends EventEmitter {
     const telemetry: Telemetry = hasGps ? input : { ...input, latitude: null, longitude: null };
 
     const evaluation = evaluateTelemetry(device.conditions, telemetry, device.geofence, profileOf(device));
+
+    // Report: credit the time since the last reading to the state it reported.
+    const previous =
+      device.telemetry && device.lastSeenAt !== null && !device.conditions.scooter_offline
+        ? { at: device.lastSeenAt, ...checkProtection(device.telemetry, profileOf(device)) }
+        : null;
+    const exposure = exposureBetween(previous && { at: previous.at, inUse: previous.inUse, unprotected: previous.unprotected }, at);
+    const incident = evaluation.events.includes('unprotected_use');
+    if (exposure.in_use_s > 0 || incident) {
+      this.store.addDayStats(device.id, dayOf(at), {
+        ...exposure,
+        incidents: incident ? 1 : 0,
+        missed: incident ? Object.fromEntries(evaluation.protection.unsafe.map((g) => [g, 1])) : {},
+      });
+    }
+
     device.telemetry = telemetry;
     device.lastSeenAt = at;
     if (hasGps) device.lastLocation = { latitude: telemetry.latitude!, longitude: telemetry.longitude!, at };
@@ -197,11 +238,72 @@ export class SafetyService extends EventEmitter {
     if (update.kind !== undefined) device.kind = update.kind;
     if (update.required_gear !== undefined) device.requiredGear = [...new Set(update.required_gear)];
     if (update.auto_lock !== undefined) device.autoLock = update.auto_lock;
+    if (update.manual_lock !== undefined) device.manualLock = update.manual_lock;
 
     // A new gear list or lock setting can start or end an alert right away.
     const live = device.conditions.scooter_offline ? null : device.telemetry;
     this.commit(device, evaluateProfileChange(device.conditions, live, profileOf(device)), this.now());
     return this.toState(device);
+  }
+
+  /** Register new equipment. The key is returned once and only its hash is stored. */
+  createDevice(input: CreateDeviceRequest): CreateDeviceResponse {
+    let id = newDeviceId(input.name);
+    while (this.store.deviceExists(id)) id = newDeviceId(input.name);
+    const apiKey = randomBytes(24).toString('hex');
+    const kind = input.kind ?? 'other';
+    this.store.seedDevice(
+      {
+        id,
+        apiKey,
+        name: input.name,
+        kind,
+        childName: input.operator_name ?? null,
+        site: input.site ?? null,
+        requiredGear: input.required_gear ? [...new Set(input.required_gear)] : [...EQUIPMENT_INFO[kind].defaultGear],
+        autoLock: input.auto_lock ?? false,
+      },
+      DEMO_PARENT_ID,
+    );
+    const device = this.toState(this.store.getDevice(id)!);
+    this.emit('state', device);
+    return { device, api_key: apiKey };
+  }
+
+  deleteDevice(deviceId: string): boolean {
+    const removed = this.store.deleteDevice(deviceId);
+    if (removed) this.emit('device_removed', { device_id: deviceId });
+    return removed;
+  }
+
+  /** Mark an alert as seen by a manager. null = no such alert. */
+  acknowledge(eventId: number, by: string | null): SafetyEvent | null {
+    const event = this.store.getEvent(eventId);
+    if (!event || event.severity !== 'alert') return null;
+    const updated = this.store.acknowledgeEvent(eventId, by, this.now());
+    if (updated) this.emit('alert_update', updated);
+    return updated;
+  }
+
+  /** Protection statistics for the last `days` days (UTC), today included. */
+  report(days: number): ReportResponse {
+    const dayList = lastDays(this.now(), days);
+    const rows = this.store.listDayStats(dayList[0]!);
+    const devices = this.store.listDevices();
+    const known = new Set(devices.map((d) => d.id));
+    const live = rows.filter((r) => known.has(r.device_id));
+    const strip = (r: DayStats) => ({ in_use_s: r.in_use_s, unprotected_s: r.unprotected_s, incidents: r.incidents, missed: r.missed });
+
+    const perDevice: DeviceReport[] = devices.map((d) => ({
+      device_id: d.id,
+      name: d.name,
+      kind: d.kind,
+      operator_name: d.childName,
+      ...sumStats(live.filter((r) => r.device_id === d.id).map(strip)),
+    }));
+    const perDay = dayList.map((day) => ({ day, ...sumStats(live.filter((r) => r.day === day).map(strip)) }));
+    const totals: ReportStats = live.length ? sumStats(live.map(strip)) : emptyStats();
+    return { from: dayList[0]!, to: dayList[dayList.length - 1]!, totals, devices: perDevice, days: perDay };
   }
 
   /** Mark devices that went silent as offline. Called on a timer. */

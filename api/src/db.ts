@@ -47,7 +47,22 @@ CREATE TABLE IF NOT EXISTS events (
   longitude REAL
 );
 CREATE INDEX IF NOT EXISTS events_by_device ON events(device_id, id DESC);
+CREATE TABLE IF NOT EXISTS daily_stats (
+  device_id TEXT NOT NULL,
+  day TEXT NOT NULL,
+  in_use_s REAL NOT NULL DEFAULT 0,
+  unprotected_s REAL NOT NULL DEFAULT 0,
+  incidents INTEGER NOT NULL DEFAULT 0,
+  missed TEXT NOT NULL DEFAULT '{}',
+  PRIMARY KEY (device_id, day)
+);
 `;
+
+/** Event columns added after the first release. */
+const ADDED_EVENT_COLUMNS: Record<string, string> = {
+  acknowledged_at: 'INTEGER',
+  acknowledged_by: 'TEXT',
+};
 
 /** Columns added after the first release; applied to existing databases on start. */
 const ADDED_COLUMNS: Record<string, string> = {
@@ -56,6 +71,7 @@ const ADDED_COLUMNS: Record<string, string> = {
   site: 'TEXT',
   required_gear: 'TEXT', // JSON GearType[]
   auto_lock: 'INTEGER',
+  manual_lock: 'INTEGER',
   geofence_points: 'TEXT', // JSON [{lat, lon}], set for polygon zones only
 };
 
@@ -85,6 +101,8 @@ export interface DeviceRow {
   site: string | null;
   requiredGear: GearType[];
   autoLock: boolean;
+  /** Locked by a manager from the app. */
+  manualLock: boolean;
   lastSeenAt: number | null;
   telemetry: Telemetry | null;
   conditions: Conditions;
@@ -106,6 +124,7 @@ function toDevice(raw: Raw): DeviceRow {
       ? JSON.parse(raw.required_gear)
       : [...EQUIPMENT_INFO[(raw.kind as EquipmentKind) ?? 'other'].defaultGear],
     autoLock: raw.auto_lock === 1,
+    manualLock: raw.manual_lock === 1,
     lastSeenAt: raw.last_seen_at ?? null,
     telemetry: raw.telemetry ? JSON.parse(raw.telemetry) : null,
     conditions: raw.conditions ? { ...NO_CONDITIONS, ...JSON.parse(raw.conditions) } : { ...NO_CONDITIONS },
@@ -137,7 +156,19 @@ function toEvent(raw: Raw): SafetyEvent {
     created_at: new Date(raw.created_at).toISOString(),
     latitude: raw.latitude ?? null,
     longitude: raw.longitude ?? null,
+    acknowledged_at: raw.acknowledged_at ? new Date(raw.acknowledged_at).toISOString() : null,
+    acknowledged_by: raw.acknowledged_by ?? null,
   };
+}
+
+/** One device's numbers for one day. */
+export interface DayStats {
+  device_id: string;
+  day: string;
+  in_use_s: number;
+  unprotected_s: number;
+  incidents: number;
+  missed: Partial<Record<GearType, number>>;
 }
 
 export class Store {
@@ -152,6 +183,10 @@ export class Store {
     const existing = new Set((this.db.prepare('PRAGMA table_info(devices)').all() as Raw[]).map((c) => c.name));
     for (const [column, type] of Object.entries(ADDED_COLUMNS)) {
       if (!existing.has(column)) this.db.exec(`ALTER TABLE devices ADD COLUMN ${column} ${type}`);
+    }
+    const eventColumns = new Set((this.db.prepare('PRAGMA table_info(events)').all() as Raw[]).map((c) => c.name));
+    for (const [column, type] of Object.entries(ADDED_EVENT_COLUMNS)) {
+      if (!eventColumns.has(column)) this.db.exec(`ALTER TABLE events ADD COLUMN ${column} ${type}`);
     }
     this.db
       .prepare('INSERT OR IGNORE INTO parents (id, name) VALUES (?, ?)')
@@ -218,7 +253,7 @@ export class Store {
   saveDevice(device: DeviceRow): void {
     this.db
       .prepare(
-        `UPDATE devices SET name = ?, child_name = ?, kind = ?, site = ?, required_gear = ?, auto_lock = ?, last_seen_at = ?, telemetry = ?, conditions = ?,
+        `UPDATE devices SET name = ?, child_name = ?, kind = ?, site = ?, required_gear = ?, auto_lock = ?, manual_lock = ?, last_seen_at = ?, telemetry = ?, conditions = ?,
            last_lat = ?, last_lon = ?, last_location_at = ?,
            geofence_lat = ?, geofence_lon = ?, geofence_radius_m = ?, geofence_points = ?
          WHERE id = ?`,
@@ -230,6 +265,7 @@ export class Store {
         device.site,
         JSON.stringify(device.requiredGear),
         device.autoLock ? 1 : 0,
+        device.manualLock ? 1 : 0,
         device.lastSeenAt,
         device.telemetry ? JSON.stringify(device.telemetry) : null,
         JSON.stringify(device.conditions),
@@ -280,6 +316,69 @@ export class Store {
       this.db.exec('ROLLBACK');
       throw error;
     }
+  }
+
+  getEvent(eventId: number): SafetyEvent | null {
+    const row = this.db.prepare('SELECT * FROM events WHERE id = ?').get(eventId) as Raw | undefined;
+    return row ? toEvent(row) : null;
+  }
+
+  /** Mark an event as seen. Acknowledging twice keeps the first time. */
+  acknowledgeEvent(eventId: number, by: string | null, at: number): SafetyEvent | null {
+    this.db
+      .prepare('UPDATE events SET acknowledged_at = COALESCE(acknowledged_at, ?), acknowledged_by = COALESCE(acknowledged_by, ?) WHERE id = ?')
+      .run(at, by, eventId);
+    return this.getEvent(eventId);
+  }
+
+  /** Add time and incidents to one device's day. */
+  addDayStats(deviceId: string, day: string, delta: Omit<DayStats, 'device_id' | 'day'>): void {
+    const row = this.db.prepare('SELECT missed FROM daily_stats WHERE device_id = ? AND day = ?').get(deviceId, day) as Raw | undefined;
+    const missed: Record<string, number> = row ? JSON.parse(row.missed) : {};
+    for (const [type, count] of Object.entries(delta.missed)) missed[type] = (missed[type] ?? 0) + (count ?? 0);
+    this.db
+      .prepare(
+        `INSERT INTO daily_stats (device_id, day, in_use_s, unprotected_s, incidents, missed) VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(device_id, day) DO UPDATE SET
+           in_use_s = in_use_s + excluded.in_use_s,
+           unprotected_s = unprotected_s + excluded.unprotected_s,
+           incidents = incidents + excluded.incidents,
+           missed = excluded.missed`,
+      )
+      .run(deviceId, day, delta.in_use_s, delta.unprotected_s, delta.incidents, JSON.stringify(missed));
+  }
+
+  listDayStats(fromDay: string): DayStats[] {
+    const rows = this.db.prepare('SELECT * FROM daily_stats WHERE day >= ? ORDER BY day').all(fromDay) as Raw[];
+    return rows.map((r) => ({
+      device_id: r.device_id,
+      day: r.day,
+      in_use_s: r.in_use_s,
+      unprotected_s: r.unprotected_s,
+      incidents: r.incidents,
+      missed: JSON.parse(r.missed),
+    }));
+  }
+
+  deviceExists(deviceId: string): boolean {
+    return !!this.db.prepare('SELECT 1 FROM devices WHERE id = ?').get(deviceId);
+  }
+
+  /** Remove a device with its history and stats. */
+  deleteDevice(deviceId: string): boolean {
+    return this.transaction(() => {
+      this.db.prepare('DELETE FROM events WHERE device_id = ?').run(deviceId);
+      this.db.prepare('DELETE FROM daily_stats WHERE device_id = ?').run(deviceId);
+      return Number(this.db.prepare('DELETE FROM devices WHERE id = ?').run(deviceId).changes) > 0;
+    });
+  }
+
+  /** Remove simulated devices (ids starting with "demo-") that are no longer configured. */
+  pruneDemoDevices(keep: readonly string[]): string[] {
+    const rows = this.db.prepare("SELECT id FROM devices WHERE id LIKE 'demo-%'").all() as Raw[];
+    const removed = rows.map((r) => r.id as string).filter((id) => !keep.includes(id));
+    for (const id of removed) this.deleteDevice(id);
+    return removed;
   }
 
   close(): void {

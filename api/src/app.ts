@@ -9,6 +9,7 @@ import {
   type AlertsResponse,
   type ApiError,
   type DemoScenario,
+  type CreateDeviceRequest,
   type DeviceUpdate,
   type DevicesResponse,
   type Telemetry,
@@ -18,7 +19,8 @@ import type { Config } from './config';
 import type { Store } from './db';
 import type { DemoRunner } from './demo';
 import type { SafetyService } from './service';
-import { deviceUpdateSchema, geofenceSchema, telemetrySchema, validationError } from './validation';
+import { acknowledgeSchema, createDeviceSchema, deviceUpdateSchema, geofenceSchema, telemetrySchema, validationError } from './validation';
+import { reportCsv } from './report';
 
 const SSE_KEEPALIVE_MS = 15_000;
 
@@ -74,6 +76,42 @@ export function createApp(deps: {
     res.json(state);
   });
 
+  app.post(ROUTE_PATTERNS.devices, (req, res) => {
+    const parsed = createDeviceSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json(validationError(parsed.error));
+    res.status(201).json(service.createDevice(parsed.data as CreateDeviceRequest));
+  });
+
+  app.delete(ROUTE_PATTERNS.device, (req, res) => {
+    const deviceId = String(req.params.deviceId);
+    if (deviceId === config.device.id) {
+      return fail(res, 409, 'configured_device', 'This device is configured on the server (DEVICE_ID) and comes back on restart');
+    }
+    if (!service.deleteDevice(deviceId)) return fail(res, 404, 'unknown_device', 'No such device');
+    res.status(204).end();
+  });
+
+  app.post(ROUTE_PATTERNS.alertAck, (req, res) => {
+    const parsed = acknowledgeSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return res.status(400).json(validationError(parsed.error));
+    const event = service.acknowledge(Number(req.params.eventId), parsed.data.by ?? null);
+    if (!event) return fail(res, 404, 'unknown_alert', 'No alert with that id');
+    res.json(event);
+  });
+
+  const reportDays = (value: unknown) => Math.min(Math.max(Math.round(Number(value)) || 7, 1), 90);
+
+  app.get(ROUTE_PATTERNS.report, (req, res) => {
+    res.json(service.report(reportDays(req.query.days)));
+  });
+
+  app.get(ROUTE_PATTERNS.reportCsv, (req, res) => {
+    const report = service.report(reportDays(req.query.days));
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="helmetto-report-${report.from}-to-${report.to}.csv"`);
+    res.send(reportCsv(report));
+  });
+
   app.patch(ROUTE_PATTERNS.device, (req, res) => {
     const parsed = deviceUpdateSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json(validationError(parsed.error));
@@ -120,13 +158,19 @@ export function createApp(deps: {
 
     const onState = (state: unknown) => send('state', state);
     const onAlert = (alert: unknown) => send('alert', alert);
+    const onAlertUpdate = (event: unknown) => send('alert_update', event);
+    const onRemoved = (removed: unknown) => send('device_removed', removed);
     service.on('state', onState);
     service.on('alert', onAlert);
+    service.on('alert_update', onAlertUpdate);
+    service.on('device_removed', onRemoved);
     const keepalive = setInterval(() => res.write(': keepalive\n\n'), SSE_KEEPALIVE_MS);
     req.on('close', () => {
       clearInterval(keepalive);
       service.off('state', onState);
       service.off('alert', onAlert);
+      service.off('alert_update', onAlertUpdate);
+      service.off('device_removed', onRemoved);
     });
   });
 
