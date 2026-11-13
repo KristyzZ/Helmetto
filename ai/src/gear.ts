@@ -5,6 +5,8 @@ export interface EquipmentProfile {
   requiredGear: readonly GearType[];
   /** Tell the equipment to lock while required gear is missing. */
   autoLock: boolean;
+  /** A manager locked it from the app, whatever the gear does. */
+  manualLock?: boolean;
 }
 
 /** Profile used when none is given: one helmet tag, no lock (the original scooter). */
@@ -54,8 +56,10 @@ export interface ProtectionCheck {
   /** Required gear that is missing or not worn. */
   unsafe: GearType[];
   inUse: boolean;
-  /** Tell the equipment to (stay) locked. */
+  /** Tell the equipment to (stay) locked: for missing gear (auto-lock) or by a manager. */
   lock: boolean;
+  /** Locked because required gear is missing. */
+  gearLock: boolean;
   /** The "No protection" alert condition. */
   unprotected: boolean;
 }
@@ -69,6 +73,14 @@ export function checkProtection(telemetry: Telemetry, profile: EquipmentProfile 
   const gear = gearStatus(telemetry, profile.requiredGear);
   const unsafe = unsafeGear(gear);
   const inUse = isInUse(telemetry);
-  const lock = profile.autoLock && unsafe.length > 0;
-  return { gear, unsafe, inUse, lock, unprotected: unsafe.length > 0 && (inUse || lock) };
+  const gearLock = profile.autoLock && unsafe.length > 0;
+  return {
+    gear,
+    unsafe,
+    inUse,
+    gearLock,
+    lock: gearLock || profile.manualLock === true,
+    // A manual lock is not a safety problem; a lock for missing gear keeps the alert active.
+    unprotected: unsafe.length > 0 && (inUse || gearLock),
+  };
 }
