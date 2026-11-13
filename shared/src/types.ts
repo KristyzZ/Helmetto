@@ -19,6 +19,8 @@ export interface GearReading {
   worn?: boolean | null;
 }
 
+export type LocationSource = "gps" | "wifi" | "demo";
+
 /** Body of POST /api/devices/:deviceId/telemetry. See shared/PROTOCOL.md. */
 export interface Telemetry {
   /** Scooter received a helmet heartbeat within its own 15 s window. */
@@ -28,6 +30,8 @@ export interface Telemetry {
   /** null = no GPS (yet) or no fix. */
   latitude: number | null;
   longitude: number | null;
+  location_source?: LocationSource;
+  location_accuracy_m?: number;
   speed_kmh: number | null;
   battery_percent: number | null;
   /** null = hardware has no accelerometer (yet). */
@@ -167,6 +171,8 @@ export interface GearStatus {
 export interface LastLocation {
   latitude: number;
   longitude: number;
+  source?: LocationSource;
+  accuracy_m?: number;
   /** ISO 8601 time of the reading. */
   at: string;
 }

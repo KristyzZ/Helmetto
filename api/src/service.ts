@@ -167,7 +167,7 @@ export class SafetyService extends EventEmitter {
         : null,
       active_alerts: activeAlerts(device.conditions),
       geofence: device.geofence,
-      zone_status: checkGeofence(device.geofence, t?.latitude, t?.longitude),
+      zone_status: t?.location_source === "wifi" ? "unknown" : checkGeofence(device.geofence, t?.latitude, t?.longitude),
       server_time: new Date(this.now()).toISOString(),
     };
   }
@@ -221,7 +221,10 @@ export class SafetyService extends EventEmitter {
     const hasGps = isValidCoordinate(input.latitude, input.longitude);
     const telemetry: Telemetry = hasGps ? input : { ...input, latitude: null, longitude: null };
 
-    const evaluation = evaluateTelemetry(device.conditions, telemetry, device.geofence, profileOf(device));
+    const safetyReading = telemetry.location_source === 'wifi'
+      ? { ...telemetry, latitude: null, longitude: null }
+      : telemetry;
+    const evaluation = evaluateTelemetry(device.conditions, safetyReading, device.geofence, profileOf(device));
 
     // Report: credit the time since the last reading to the state it reported.
     const previous =
@@ -251,7 +254,10 @@ export class SafetyService extends EventEmitter {
 
     device.telemetry = telemetry;
     device.lastSeenAt = at;
-    if (hasGps) device.lastLocation = { latitude: telemetry.latitude!, longitude: telemetry.longitude!, at };
+    if (hasGps) device.lastLocation = {
+      latitude: telemetry.latitude!, longitude: telemetry.longitude!, at,
+      source: telemetry.location_source, accuracy_m: telemetry.location_accuracy_m,
+    };
     return { events: this.commit(device, evaluation, at), lock: evaluation.protection.lock };
   }
 
@@ -259,7 +265,7 @@ export class SafetyService extends EventEmitter {
     const device = this.store.getDevice(deviceId);
     if (!device) return null;
     // Judge the new zone only against a live reading, not a stale one.
-    const live = device.conditions.scooter_offline ? null : device.telemetry;
+    const live = device.conditions.scooter_offline || device.telemetry?.location_source === 'wifi' ? null : device.telemetry;
     const evaluation = live
       ? evaluateGeofenceChange(device.conditions, live, geofence)
       : { conditions: { ...device.conditions, geofence_exit: false }, events: [] };
@@ -282,7 +288,7 @@ export class SafetyService extends EventEmitter {
     if (update.manual_lock !== undefined) device.manualLock = update.manual_lock;
 
     // A new gear list or lock setting can start or end an alert right away.
-    const live = device.conditions.scooter_offline ? null : device.telemetry;
+    const live = device.conditions.scooter_offline || device.telemetry?.location_source === 'wifi' ? null : device.telemetry;
     this.commit(device, evaluateProfileChange(device.conditions, live, profileOf(device)), this.now());
     return this.toState(device);
   }

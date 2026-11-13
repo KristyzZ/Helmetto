@@ -84,6 +84,8 @@ const ADDED_EVENT_COLUMNS: Record<string, string> = {
 
 /** Columns added after the first release; applied to existing databases on start. */
 const ADDED_COLUMNS: Record<string, string> = {
+  last_location_source: "TEXT",
+  last_location_accuracy_m: "REAL",
   child_name: 'TEXT', // the operator's name
   kind: 'TEXT',
   site: 'TEXT',
@@ -148,7 +150,11 @@ function toDevice(raw: Raw): DeviceRow {
     conditions: raw.conditions ? { ...NO_CONDITIONS, ...JSON.parse(raw.conditions) } : { ...NO_CONDITIONS },
     lastLocation:
       raw.last_lat != null && raw.last_lon != null
-        ? { latitude: raw.last_lat, longitude: raw.last_lon, at: raw.last_location_at }
+        ? {
+            latitude: raw.last_lat, longitude: raw.last_lon, at: raw.last_location_at,
+            source: raw.last_location_source ?? undefined,
+            accuracy_m: raw.last_location_accuracy_m ?? undefined,
+          }
         : null,
     geofence:
       raw.geofence_lat != null
@@ -285,7 +291,7 @@ export class Store {
     this.db
       .prepare(
         `UPDATE devices SET name = ?, child_name = ?, kind = ?, site = ?, required_gear = ?, auto_lock = ?, manual_lock = ?, last_seen_at = ?, telemetry = ?, conditions = ?,
-           last_lat = ?, last_lon = ?, last_location_at = ?,
+           last_lat = ?, last_lon = ?, last_location_at = ?, last_location_source = ?, last_location_accuracy_m = ?,
            geofence_lat = ?, geofence_lon = ?, geofence_radius_m = ?, geofence_points = ?
          WHERE id = ?`,
       )
@@ -303,6 +309,8 @@ export class Store {
         device.lastLocation?.latitude ?? null,
         device.lastLocation?.longitude ?? null,
         device.lastLocation?.at ?? null,
+        device.lastLocation?.source ?? null,
+        device.lastLocation?.accuracy_m ?? null,
         device.geofence?.latitude ?? null,
         device.geofence?.longitude ?? null,
         device.geofence?.radius_m ?? null,
