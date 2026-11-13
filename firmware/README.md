@@ -46,3 +46,9 @@ Paspirtukui užfiksavus bendrą pagreitį nuo 2,5 g, Serial Monitor rodo `IMPACT
 Paspirtukas kas 5 s siunčia POST su `helmet_connected` ir `crash_detected`. Vietinis 3 s perspėjimas išlieka. Programėlėje šalmas laikomas prisijungusiu iki 15 s nuo paskutinio signalo. Smūgis išlaikomas iki sėkmingo API atsakymo, o kitas siuntimas be naujo smūgio išvalo aktyvų perspėjimą. Iki vieno sėkmingo siuntimo keli smūgiai sujungiami į vieną signalą. GPS, greitis, baterija ir šalmo dėvėjimas programėlėje lieka nežinomi.
 
 ESP8266 HTTP užklausa vykdoma sinchroniškai, todėl jos metu MPU6050 nuskaitymas trumpam pristabdomas. [API kontraktas](../shared/PROTOCOL.md)
+
+## FSR402 ir vietos demonstracija
+
+Šalmo FSR402 skaitomas per A0. Bandomasis dėvėjimo slenkstis yra 50. Įkelk abu sketch'us ir nustatyk šalmo kanalą pagal paspirtuko naudojamą Wi-Fi kanalą. Paspirtukas priima ir seną vieno baito heartbeat. Tokiu atveju dėvėjimo būsena lieka nežinoma.
+
+Paspirtuko sketch'ui per Arduino Library Manager įdiek TinyGPSPlus. Pagal numatytąjį nustatymą `USE_DEMO_LOCATION = true` į žemėlapį siunčia fiksuotą ISM vietą Vilniuje. Jei nori naudoti tikrą GPS vietą, nustatyk `USE_DEMO_LOCATION = false` ir prijunk GPS TX prie GPIO12 (D6).
