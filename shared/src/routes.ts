@@ -11,6 +11,9 @@ export const ROUTE_PATTERNS = {
   deviceAlerts: '/api/devices/:deviceId/alerts',
   deviceGeofence: '/api/devices/:deviceId/geofence',
   stream: '/api/stream',
+  alertAck: '/api/alerts/:eventId/acknowledge',
+  report: '/api/report',
+  reportCsv: '/api/report.csv',
   demo: '/api/demo',
 } as const;
 
@@ -26,6 +29,9 @@ export const routes = {
   deviceAlerts: (deviceId: string) => `/api/devices/${id(deviceId)}/alerts`,
   deviceGeofence: (deviceId: string) => `/api/devices/${id(deviceId)}/geofence`,
   stream: () => '/api/stream',
+  alertAck: (eventId: number) => `/api/alerts/${eventId}/acknowledge`,
+  report: (days: number) => `/api/report?days=${days}`,
+  reportCsv: (days: number) => `/api/report.csv?days=${days}`,
   demo: () => '/api/demo',
 } as const;
 

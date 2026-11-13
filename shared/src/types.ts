@@ -109,9 +109,12 @@ export interface SafetyEvent {
   message: string;
   /** ISO 8601, server clock. */
   created_at: string;
-  /** Where the scooter was when it happened, if known. */
+  /** Where the equipment was when it happened, if known. */
   latitude: number | null;
   longitude: number | null;
+  /** When a manager marked it as seen; null/missing = not yet. */
+  acknowledged_at?: string | null;
+  acknowledged_by?: string | null;
 }
 
 export type ZoneStatus = 'inside' | 'outside' | 'unknown';
@@ -153,6 +156,8 @@ export interface DeviceState {
   auto_lock?: boolean;
   /** The server is currently telling the equipment to stay locked. */
   lock_engaged?: boolean;
+  /** A manager locked it from the app; stays locked until unlocked there. */
+  manual_lock?: boolean;
   /**
    * Scooter sent telemetry within the last 30 s.
    * false + helmet data present means "scooter offline", NOT "helmet disconnected":
@@ -186,6 +191,63 @@ export interface DeviceUpdate {
   site?: string | null;
   required_gear?: GearType[];
   auto_lock?: boolean;
+  /** Lock or unlock the equipment from the app. */
+  manual_lock?: boolean;
+}
+
+/** Body of POST /api/devices: register new equipment. */
+export interface CreateDeviceRequest {
+  name: string;
+  kind?: EquipmentKind;
+  operator_name?: string | null;
+  site?: string | null;
+  /** Defaults to the kind's usual gear. */
+  required_gear?: GearType[];
+  auto_lock?: boolean;
+}
+
+/** The API key is only ever shown in this response. */
+export interface CreateDeviceResponse {
+  device: DeviceState;
+  api_key: string;
+}
+
+/** Body of POST /api/alerts/:eventId/acknowledge. */
+export interface AcknowledgeRequest {
+  /** Who acknowledged it; optional. */
+  by?: string | null;
+}
+
+/** Safety statistics for one device (or the whole fleet) over a period. */
+export interface ReportStats {
+  /** Seconds in use. */
+  in_use_s: number;
+  /** Seconds in use with required gear missing. */
+  unprotected_s: number;
+  /** "No protection" alerts that started. */
+  incidents: number;
+  /** Share of in-use time with all required gear, 0..1; null = not used. */
+  compliance: number | null;
+  /** How often each gear type was missing when an incident started. */
+  missed: Partial<Record<GearType, number>>;
+}
+
+export interface DeviceReport extends ReportStats {
+  device_id: string;
+  name: string;
+  kind: EquipmentKind;
+  operator_name: string | null;
+}
+
+/** GET /api/report?days=7 */
+export interface ReportResponse {
+  /** First and last day included, YYYY-MM-DD (UTC). */
+  from: string;
+  to: string;
+  totals: ReportStats;
+  devices: DeviceReport[];
+  /** One entry per day, oldest first. */
+  days: ({ day: string } & ReportStats)[];
 }
 
 export interface DevicesResponse {
@@ -242,4 +304,8 @@ export interface StreamEvents {
   state: DeviceState;
   /** A new safety event was logged. */
   alert: SafetyEvent;
+  /** An existing event changed (acknowledged). */
+  alert_update: SafetyEvent;
+  /** A device was removed. */
+  device_removed: { device_id: string };
 }
