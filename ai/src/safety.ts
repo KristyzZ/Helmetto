@@ -7,6 +7,7 @@ import {
   type SafetyEventType,
   type Telemetry,
 } from '@helmetto/shared';
+import { checkProtection, DEFAULT_PROFILE, type EquipmentProfile, type ProtectionCheck } from './gear';
 import { isPolygonZone, polygonAreaM2, zoneDepthMeters } from './geo';
 
 /** Which alert conditions are active for one scooter. */
@@ -18,12 +19,17 @@ export interface Evaluation {
   events: SafetyEventType[];
 }
 
+export interface TelemetryEvaluation extends Evaluation {
+  protection: ProtectionCheck;
+}
+
 export const NO_CONDITIONS: Readonly<Conditions> = Object.freeze({
   helmet_disconnected: false,
   helmet_not_worn: false,
   crash_detected: false,
   geofence_exit: false,
   scooter_offline: false,
+  unprotected_use: false,
 });
 
 /** GPS jitter guard: once outside, the scooter must come this far back in to count as inside. */
@@ -65,15 +71,22 @@ function geofenceExit(previous: boolean, telemetry: Telemetry, geofence: Geofenc
   return depth < hysteresisMargin(geofence);
 }
 
-/** Conditions after a telemetry reading. Receiving telemetry means the scooter is online. */
+/**
+ * Conditions after a telemetry reading. Receiving telemetry means the device is
+ * online. Missing gear only counts while the equipment is in use (or locked
+ * because of it): that is the "No protection" alert. The original helmet
+ * alerts are folded into it.
+ */
 export function nextConditions(
   previous: Conditions,
   telemetry: Telemetry,
   geofence: Geofence | null,
+  profile: EquipmentProfile = DEFAULT_PROFILE,
 ): Conditions {
   return {
-    helmet_disconnected: hold(previous.helmet_disconnected, telemetry.helmet_connected, false),
-    helmet_not_worn: hold(previous.helmet_not_worn, telemetry.helmet_worn, false),
+    helmet_disconnected: false,
+    helmet_not_worn: false,
+    unprotected_use: checkProtection(telemetry, profile).unprotected,
     crash_detected: hold(previous.crash_detected, telemetry.crash_detected, true),
     geofence_exit: geofenceExit(previous.geofence_exit, telemetry, geofence),
     scooter_offline: false,
@@ -83,6 +96,7 @@ export function nextConditions(
 const TRANSITION_ORDER: readonly AlertType[] = [
   'scooter_offline',
   'crash_detected',
+  'unprotected_use',
   'helmet_disconnected',
   'helmet_not_worn',
   'geofence_exit',
@@ -106,8 +120,20 @@ export function evaluateTelemetry(
   previous: Conditions,
   telemetry: Telemetry,
   geofence: Geofence | null,
+  profile: EquipmentProfile = DEFAULT_PROFILE,
+): TelemetryEvaluation {
+  const conditions = nextConditions(previous, telemetry, geofence, profile);
+  return { conditions, events: detectTransitions(previous, conditions), protection: checkProtection(telemetry, profile) };
+}
+
+/** The required gear or auto-lock setting changed: re-check the last live reading. */
+export function evaluateProfileChange(
+  previous: Conditions,
+  lastTelemetry: Telemetry | null,
+  profile: EquipmentProfile,
 ): Evaluation {
-  const conditions = nextConditions(previous, telemetry, geofence);
+  if (!lastTelemetry) return { conditions: { ...previous, unprotected_use: false }, events: [] };
+  const conditions = { ...previous, unprotected_use: checkProtection(lastTelemetry, profile).unprotected };
   return { conditions, events: detectTransitions(previous, conditions) };
 }
 

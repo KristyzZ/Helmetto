@@ -58,7 +58,7 @@ describe('helmet connection transitions', () => {
       reading({ helmet_connected: false }),
       reading({ helmet_connected: false }),
     ]);
-    expect(steps).toEqual([[], ['helmet_disconnected'], [], []]);
+    expect(steps).toEqual([[], ['unprotected_use'], [], []]);
   });
   it('logs the reconnect, then alerts again on a new disconnect', () => {
     const { steps } = run([
@@ -67,7 +67,7 @@ describe('helmet connection transitions', () => {
       reading(),
       reading({ helmet_connected: false }),
     ]);
-    expect(steps).toEqual([['helmet_disconnected'], ['helmet_reconnected'], [], ['helmet_disconnected']]);
+    expect(steps).toEqual([['unprotected_use'], ['protection_restored'], [], ['unprotected_use']]);
   });
   it('a normal first reading produces no events', () => {
     expect(evaluateTelemetry(NO_CONDITIONS, reading(), null).events).toEqual([]);
@@ -78,7 +78,7 @@ describe('helmet worn', () => {
   it('null (no sensor) is never treated as "not worn"', () => {
     const { steps, conditions } = run([reading({ helmet_worn: null }), reading({ helmet_worn: null })]);
     expect(steps).toEqual([[], []]);
-    expect(conditions.helmet_not_worn).toBe(false);
+    expect(conditions.unprotected_use).toBe(false);
   });
   it('alerts once on not worn and logs recovery', () => {
     const { steps } = run([
@@ -87,12 +87,12 @@ describe('helmet worn', () => {
       reading({ helmet_worn: false }),
       reading({ helmet_worn: true }),
     ]);
-    expect(steps).toEqual([[], ['helmet_not_worn'], [], ['helmet_worn']]);
+    expect(steps).toEqual([[], ['unprotected_use'], [], ['protection_restored']]);
   });
-  it('a null reading keeps the previous condition without a new event', () => {
+  it('a null worn reading means "no sensor": a connected tag counts as protected', () => {
     const { steps, conditions } = run([reading({ helmet_worn: false }), reading({ helmet_worn: null })]);
-    expect(steps).toEqual([['helmet_not_worn'], []]);
-    expect(conditions.helmet_not_worn).toBe(true);
+    expect(steps).toEqual([['unprotected_use'], ['protection_restored']]);
+    expect(conditions.unprotected_use).toBe(false);
   });
 });
 
@@ -156,11 +156,11 @@ describe('offline', () => {
     const helmetOff = evaluateTelemetry(NO_CONDITIONS, reading({ helmet_connected: false }), null).conditions;
     const offline = evaluateHeartbeat(helmetOff, 0, 31_000);
     expect(offline.events).toEqual(['scooter_offline']);
-    expect(activeAlerts(offline.conditions).sort()).toEqual(['helmet_disconnected', 'scooter_offline']);
+    expect(activeAlerts(offline.conditions).sort()).toEqual(['scooter_offline', 'unprotected_use']);
     // back online with the helmet connected: both recoveries, online first
     expect(evaluateTelemetry(offline.conditions, reading(), null).events).toEqual([
       'scooter_online',
-      'helmet_reconnected',
+      'protection_restored',
     ]);
   });
 });
@@ -175,7 +175,7 @@ describe('detectTransitions', () => {
       reading({ helmet_connected: false, crash_detected: true }),
       null,
     ).events;
-    expect(events).toEqual(['crash_detected', 'helmet_disconnected']);
+    expect(events).toEqual(['crash_detected', 'unprotected_use']);
   });
 });
 

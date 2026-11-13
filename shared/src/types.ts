@@ -4,6 +4,21 @@
  * The wire format is snake_case everywhere.
  */
 
+/** What a device is attached to. Missing = 'other'. */
+export type EquipmentKind = 'power_tool' | 'chainsaw' | 'boat' | 'scooter' | 'other';
+
+/** Protective gear that can carry a tag. */
+export type GearType = 'helmet' | 'eye_protection' | 'ear_protection' | 'gloves' | 'chaps' | 'life_jacket';
+
+/** One paired gear tag, as heard by the equipment. */
+export interface GearReading {
+  type: GearType;
+  /** The equipment heard this tag's heartbeat recently. */
+  connected: boolean;
+  /** Wearing sensor; null/missing = the tag has none. */
+  worn?: boolean | null;
+}
+
 /** Body of POST /api/devices/:deviceId/telemetry. See shared/PROTOCOL.md. */
 export interface Telemetry {
   /** Scooter received a helmet heartbeat within its own 15 s window. */
@@ -17,6 +32,18 @@ export interface Telemetry {
   battery_percent: number | null;
   /** null = hardware has no accelerometer (yet). */
   crash_detected: boolean | null;
+  /**
+   * The equipment is in use: tool switched on, saw running, boat under way.
+   * null/missing = the hardware can't tell; a device that is reporting is then assumed in use.
+   */
+  equipment_active?: boolean | null;
+  /**
+   * One entry per paired gear tag. When present it replaces helmet_connected /
+   * helmet_worn for the safety check. null/missing = single-tag hardware.
+   */
+  gear?: GearReading[] | null;
+  /** The equipment is currently locked out (can't be started). null = no lock hardware. */
+  locked?: boolean | null;
 }
 
 /** A map point. Used for the corners of a drawn safe zone. */
@@ -57,7 +84,9 @@ export type AlertType =
   | 'helmet_not_worn'
   | 'crash_detected'
   | 'geofence_exit'
-  | 'scooter_offline';
+  | 'scooter_offline'
+  /** Equipment in use while required protective gear is missing or not worn. */
+  | 'unprotected_use';
 
 /** Logged when an active condition ends. */
 export type RecoveryType =
@@ -65,7 +94,8 @@ export type RecoveryType =
   | 'helmet_worn'
   | 'crash_cleared'
   | 'geofence_enter'
-  | 'scooter_online';
+  | 'scooter_online'
+  | 'protection_restored';
 
 export type SafetyEventType = AlertType | RecoveryType;
 export type Severity = 'alert' | 'recovery';
@@ -86,6 +116,14 @@ export interface SafetyEvent {
 
 export type ZoneStatus = 'inside' | 'outside' | 'unknown';
 
+/** State of one piece of required gear. 'unknown' = no tag for it, or no data. */
+export type GearState = 'ok' | 'missing' | 'not_worn' | 'unknown';
+
+export interface GearStatus {
+  type: GearType;
+  state: GearState;
+}
+
 export interface LastLocation {
   latitude: number;
   longitude: number;
@@ -97,8 +135,24 @@ export interface LastLocation {
 export interface DeviceState {
   device_id: string;
   name: string;
-  /** Name of the child who rides this scooter; null/missing = not set. */
+  /** Name of the child who rides this scooter; null/missing = not set. Same value as operator_name. */
   child_name?: string | null;
+  /** What the device is attached to. */
+  kind?: EquipmentKind;
+  /** Who uses this equipment (worker, skipper, rider); null = not set. */
+  operator_name?: string | null;
+  /** Where it is used, e.g. "Workshop A"; null = not set. */
+  site?: string | null;
+  /** Gear that must be present while the equipment is in use. */
+  required_gear?: GearType[];
+  /** One entry per required gear item, from the latest reading. */
+  gear_status?: GearStatus[];
+  /** In use right now; null = unknown (offline or never reported). */
+  in_use?: boolean | null;
+  /** Lock the equipment when required gear is missing (needs lock hardware). */
+  auto_lock?: boolean;
+  /** The server is currently telling the equipment to stay locked. */
+  lock_engaged?: boolean;
   /**
    * Scooter sent telemetry within the last 30 s.
    * false + helmet data present means "scooter offline", NOT "helmet disconnected":
@@ -125,6 +179,13 @@ export interface DeviceUpdate {
   name?: string;
   /** null clears the name. */
   child_name?: string | null;
+  kind?: EquipmentKind;
+  /** null clears it. Same field as child_name. */
+  operator_name?: string | null;
+  /** null clears it. */
+  site?: string | null;
+  required_gear?: GearType[];
+  auto_lock?: boolean;
 }
 
 export interface DevicesResponse {
@@ -139,6 +200,8 @@ export interface AlertsResponse {
 export interface TelemetryAccepted {
   ok: true;
   received_at: string;
+  /** true = keep the equipment locked (auto-lock is on and required gear is missing). */
+  lock?: boolean;
 }
 
 export interface ApiError {
@@ -154,7 +217,10 @@ export type DemoScenario =
   | 'helmet-not-worn'
   | 'crash'
   | 'geofence-exit'
-  | 'offline';
+  | 'offline'
+  | 'gear-removed'
+  | 'gear-back'
+  | 'idle';
 
 export interface DemoStatus {
   /** false = server started without DEMO_MODE; POST is rejected. */
@@ -162,6 +228,10 @@ export interface DemoStatus {
   running: boolean;
   scenario: DemoScenario | null;
   device_id: string | null;
+  /** Every simulated device and its scenario. */
+  runs?: { device_id: string; scenario: DemoScenario }[];
+  /** Devices the demo can simulate. */
+  devices?: string[];
 }
 
 /** Payloads of the Server-Sent Events on GET /api/stream, keyed by event name. */
