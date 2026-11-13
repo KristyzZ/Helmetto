@@ -1,32 +1,39 @@
 import { useState } from 'react';
 import type { AlertType, DeviceState, SafetyEvent } from '@helmetto/shared';
+import { EquipmentSettings } from '../EquipmentSettings';
 import { Icon } from '../icons';
 import { MapView } from '../MapView';
 import { Sheet } from '../Sheet';
 import {
   ALERT_HELP,
   EVENT_ICON,
+  GEAR_ICON,
+  KIND_ICON,
   alertTone,
   chips,
+  gearTiles,
   hasReported,
   hero,
+  kindOf,
   location,
   locationLabel,
+  subtitle,
   title,
   visibleAlerts,
   zoneLabel,
-  type Chip,
 } from '../status';
 import { ago, clock, duration } from '../time';
 
-type Detail = { kind: 'hero' } | { kind: 'alert'; type: AlertType } | { kind: 'chip'; chip: Chip['key'] };
+type Detail = { kind: 'hero' } | { kind: 'alert'; type: AlertType } | { kind: 'chip'; key: string } | { kind: 'settings' };
 
-export function Dashboard(props: {
+export function DevicePage(props: {
   device: DeviceState;
   events: SafetyEvent[];
   serverNow: number;
+  onBack: () => void;
   onOpenMap: () => void;
   onOpenAlerts: () => void;
+  onSaved: (state: DeviceState) => void;
 }) {
   const { device, events, serverNow } = props;
   const [detail, setDetail] = useState<Detail | null>(null);
@@ -34,18 +41,33 @@ export function Dashboard(props: {
   const summary = hero(device, serverNow);
   const others = visibleAlerts(device).filter((type) => type !== summary.alert);
   const chipList = chips(device, serverNow);
+  const gear = gearTiles(device);
   const { position, live } = location(device);
   const zone = zoneLabel(device);
-  // The hero and the rows under it already show active alerts; "Latest" is for anything else.
   const shown = visibleAlerts(device) as string[];
   const latest = events.find((e) => !shown.includes(e.type));
 
   const since = (type: AlertType) => events.find((e) => e.type === type)?.created_at ?? null;
-  const openChip = detail?.kind === 'chip' ? chipList.find((c) => c.key === detail.chip) : undefined;
+  const openChip = detail?.kind === 'chip' ? chipList.find((c) => c.key === detail.key) : undefined;
   const openAlert = detail?.kind === 'alert' ? detail.type : detail?.kind === 'hero' ? summary.alert : null;
+  const close = () => setDetail(null);
 
   return (
     <div className="page">
+      <div className="page-head">
+        <button className="icon-button" onClick={props.onBack} aria-label="Back to all equipment">
+          <Icon name="back" size={22} />
+        </button>
+        <span className="page-head__icon"><Icon name={KIND_ICON[kindOf(device)]} size={22} /></span>
+        <span className="page-head__text">
+          <strong>{device.name}</strong>
+          <small>{subtitle(device)}</small>
+        </span>
+        <button className="icon-button" onClick={() => setDetail({ kind: 'settings' })} aria-label="Equipment settings">
+          <Icon name="sliders" size={20} />
+        </button>
+      </div>
+
       <button className={`hero hero--${summary.tone}`} onClick={() => setDetail({ kind: 'hero' })} aria-live="polite">
         <span className="hero__disc"><Icon name={summary.icon} size={30} /></span>
         <span className="hero__title">{summary.title}</span>
@@ -57,7 +79,7 @@ export function Dashboard(props: {
       </button>
 
       {others.length > 0 && (
-        <ul className="also">
+        <ul className="list">
           {others.map((type) => (
             <li key={type}>
               <button className="row" onClick={() => setDetail({ kind: 'alert', type })}>
@@ -70,9 +92,23 @@ export function Dashboard(props: {
         </ul>
       )}
 
-      <div className="chips">
+      <section>
+        <h2 className="label">Required gear</h2>
+        <div className="gear-grid">
+          {gear.map((g) => (
+            <div key={g.type} className={`gear gear--${g.tone}`}>
+              <span className={`gear__icon tone-${g.tone}`}><Icon name={GEAR_ICON[g.type]} size={22} /></span>
+              <span className="gear__value">{g.value}</span>
+              <span className="gear__label">{g.label}</span>
+            </div>
+          ))}
+          {gear.length === 0 && <p className="empty">No gear required. Add some in settings.</p>}
+        </div>
+      </section>
+
+      <div className="chips" style={{ gridTemplateColumns: `repeat(${chipList.length}, 1fr)` }}>
         {chipList.map((chip) => (
-          <button key={chip.key} className={`chip chip--${chip.tone}`} onClick={() => setDetail({ kind: 'chip', chip: chip.key })}>
+          <button key={chip.key} className={`chip chip--${chip.tone}`} onClick={() => setDetail({ kind: 'chip', key: chip.key })}>
             <Icon name={chip.icon} size={18} />
             <span className="chip__value">{chip.value}</span>
             <span className="chip__label">{chip.label}</span>
@@ -80,9 +116,9 @@ export function Dashboard(props: {
         ))}
       </div>
 
-      <button className="preview" onClick={props.onOpenMap} aria-label="Open map">
-        <span className="preview__map">
-          {position ? (
+      {(position || device.geofence) && (
+        <button className="preview" onClick={props.onOpenMap} aria-label="Open map">
+          <span className="preview__map">
             <MapView
               position={position}
               stale={!live}
@@ -92,16 +128,14 @@ export function Dashboard(props: {
               follow
               interactive={false}
             />
-          ) : (
-            <span className="preview__empty"><Icon name="map" size={22} /> No location yet</span>
-          )}
-        </span>
-        <span className="preview__foot">
-          <span className="state"><i className={`dot tone-${zone.tone}`} />{zone.text}</span>
-          <span className="preview__where">{position ? locationLabel(device, serverNow) : 'Open map'}</span>
-          <Icon name="chevron" size={16} />
-        </span>
-      </button>
+          </span>
+          <span className="preview__foot">
+            <span className="state"><i className={`dot tone-${zone.tone}`} />{zone.text}</span>
+            <span className="preview__where">{locationLabel(device, serverNow)}</span>
+            <Icon name="chevron" size={16} />
+          </span>
+        </button>
+      )}
 
       {latest && (
         <button className="row row--card" onClick={props.onOpenAlerts}>
@@ -116,11 +150,9 @@ export function Dashboard(props: {
       )}
 
       {detail && openAlert && (
-        <Sheet title={title(openAlert)} icon={EVENT_ICON[openAlert]} tone={alertTone(openAlert)} onClose={() => setDetail(null)}>
+        <Sheet title={summary.alert === openAlert ? summary.title : title(openAlert)} icon={EVENT_ICON[openAlert]} tone={alertTone(openAlert)} onClose={close}>
           <p>{ALERT_HELP[openAlert]}</p>
-          {since(openAlert) && (
-            <p className="meta">Since {clock(since(openAlert)!)} · {duration(since(openAlert), serverNow)}</p>
-          )}
+          {since(openAlert) && <p className="meta">Since {clock(since(openAlert)!)} · {duration(since(openAlert), serverNow)}</p>}
           <div className="sheet__actions">
             {position && <button className="button" onClick={props.onOpenMap}>Show on map</button>}
             <button className="button button--primary" onClick={props.onOpenAlerts}>All alerts</button>
@@ -128,16 +160,16 @@ export function Dashboard(props: {
         </Sheet>
       )}
       {detail?.kind === 'hero' && !openAlert && (
-        <Sheet title={summary.title} icon={summary.icon} tone={summary.tone} onClose={() => setDetail(null)}>
+        <Sheet title={summary.title} icon={summary.icon} tone={summary.tone} onClose={close}>
           <p>{summary.help}</p>
-          {hasReported(device) && <p className="meta">Last update {ago(device.last_seen_at, serverNow)}</p>}
         </Sheet>
       )}
       {openChip && (
-        <Sheet title={`${openChip.label}: ${openChip.value === '—' ? 'unknown' : openChip.value}`} icon={openChip.icon} tone={openChip.tone} onClose={() => setDetail(null)}>
+        <Sheet title={`${openChip.label}: ${openChip.value === '—' ? 'unknown' : openChip.value}`} icon={openChip.icon} tone={openChip.tone} onClose={close}>
           <p>{openChip.help}</p>
         </Sheet>
       )}
+      {detail?.kind === 'settings' && <EquipmentSettings device={device} onClose={close} onSaved={props.onSaved} />}
     </div>
   );
 }

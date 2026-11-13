@@ -40,5 +40,6 @@ export const api = {
   updateDevice: (deviceId: string, update: DeviceUpdate) =>
     request<DeviceState>(routes.device(deviceId), json('PATCH', update)),
   demoStatus: () => request<DemoStatus>(routes.demo()),
-  runDemo: (scenario: DemoScenario | 'stop') => request<DemoStatus>(routes.demo(), json('POST', { scenario })),
+  runDemo: (scenario: DemoScenario | 'stop' | 'start-all', deviceId?: string) =>
+    request<DemoStatus>(routes.demo(), json('POST', { scenario, device_id: deviceId })),
 };

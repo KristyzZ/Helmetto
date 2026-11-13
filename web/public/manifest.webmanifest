@@ -1,7 +1,7 @@
 {
   "name": "Helmetto",
   "short_name": "Helmetto",
-  "description": "Helmet, crash and safe-zone alerts for your child's e-scooter.",
+  "description": "Protective gear check for power tools, chainsaws and boats.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

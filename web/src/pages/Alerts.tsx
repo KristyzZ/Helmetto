@@ -3,7 +3,7 @@ import type { AlertType, DeviceState, SafetyEvent } from '@helmetto/shared';
 import { Icon } from '../icons';
 import { notifyPermission, requestNotifyPermission, type NotifyPermission } from '../notify';
 import { Sheet } from '../Sheet';
-import { ALERT_HELP, EVENT_ICON, alertLine, alertTone, title, visibleAlerts } from '../status';
+import { ALERT_HELP, EVENT_ICON, alertLine, alertTone, attention, title } from '../status';
 import { clock, dayLabel, duration } from '../time';
 
 function Notifications() {
@@ -41,14 +41,19 @@ function Notifications() {
   );
 }
 
-export function Alerts(props: { device: DeviceState; events: SafetyEvent[]; serverNow: number; onOpenMap: () => void }) {
-  const { device, events, serverNow } = props;
-  const [openAlert, setOpenAlert] = useState<AlertType | null>(null);
+export function Alerts(props: {
+  devices: DeviceState[];
+  alerts: Record<string, SafetyEvent[]>;
+  serverNow: number;
+  onOpenDevice: (deviceId: string) => void;
+}) {
+  const { devices, alerts, serverNow } = props;
   const [openEvent, setOpenEvent] = useState<SafetyEvent | null>(null);
-  const active = visibleAlerts(device);
-
-  // an active alert started at its newest matching event
-  const since = (type: AlertType) => events.find((e) => e.type === type)?.created_at ?? null;
+  const [openAlert, setOpenAlert] = useState<{ device: DeviceState; type: AlertType } | null>(null);
+  const names = Object.fromEntries(devices.map((d) => [d.device_id, d.name]));
+  const active = attention(devices);
+  const events = Object.values(alerts).flat().sort((a, b) => b.id - a.id).slice(0, 200);
+  const since = (deviceId: string, type: AlertType) => alerts[deviceId]?.find((e) => e.type === type)?.created_at ?? null;
 
   const days: { label: string; items: SafetyEvent[] }[] = [];
   for (const event of events) {
@@ -71,19 +76,22 @@ export function Alerts(props: { device: DeviceState; events: SafetyEvent[]; serv
           </div>
         ) : (
           <ul className="list">
-            {active.map((type) => (
-              <li key={type}>
-                <button className="row" onClick={() => setOpenAlert(type)}>
-                  <span className={`disc disc--sm tone-${alertTone(type)}`}><Icon name={EVENT_ICON[type]} size={18} /></span>
-                  <span className="row__text">
-                    <strong>{title(type)}</strong>
-                    <small>{alertLine(type, device)}</small>
-                  </span>
-                  {since(type) && <time>{duration(since(type), serverNow)}</time>}
-                  <Icon name="chevron" size={16} />
-                </button>
-              </li>
-            ))}
+            {active.map(({ device, alert }) => {
+              const start = since(device.device_id, alert);
+              return (
+                <li key={device.device_id}>
+                  <button className="row" onClick={() => setOpenAlert({ device, type: alert })}>
+                    <span className={`disc disc--sm tone-${alertTone(alert)}`}><Icon name={EVENT_ICON[alert]} size={18} /></span>
+                    <span className="row__text">
+                      <strong>{device.name}</strong>
+                      <small>{title(alert)} · {alertLine(alert, device)}</small>
+                    </span>
+                    {start && <time>{duration(start, serverNow)}</time>}
+                    <Icon name="chevron" size={16} />
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>
@@ -103,7 +111,10 @@ export function Alerts(props: { device: DeviceState; events: SafetyEvent[]; serv
                   <li key={event.id}>
                     <button className="row row--slim" onClick={() => setOpenEvent(event)}>
                       <i className={`dot tone-${event.severity === 'alert' ? 'alert' : 'ok'}`} />
-                      <span className="row__text"><span>{title(event.type)}</span></span>
+                      <span className="row__text">
+                        <span>{title(event.type)}</span>
+                        <small>{names[event.device_id] ?? event.device_id}</small>
+                      </span>
                       <time dateTime={event.created_at}>{clock(event.created_at)}</time>
                     </button>
                   </li>
@@ -115,11 +126,10 @@ export function Alerts(props: { device: DeviceState; events: SafetyEvent[]; serv
       </section>
 
       {openAlert && (
-        <Sheet title={title(openAlert)} icon={EVENT_ICON[openAlert]} tone={alertTone(openAlert)} onClose={() => setOpenAlert(null)}>
-          <p>{ALERT_HELP[openAlert]}</p>
-          {since(openAlert) && <p className="meta">Since {clock(since(openAlert)!)} · {duration(since(openAlert), serverNow)}</p>}
+        <Sheet title={`${openAlert.device.name}: ${title(openAlert.type)}`} icon={EVENT_ICON[openAlert.type]} tone={alertTone(openAlert.type)} onClose={() => setOpenAlert(null)}>
+          <p>{ALERT_HELP[openAlert.type]}</p>
           <div className="sheet__actions">
-            <button className="button button--primary" onClick={props.onOpenMap}>Show on map</button>
+            <button className="button button--primary" onClick={() => props.onOpenDevice(openAlert.device.device_id)}>Open equipment</button>
           </div>
         </Sheet>
       )}
@@ -132,6 +142,9 @@ export function Alerts(props: { device: DeviceState; events: SafetyEvent[]; serv
         >
           <p>{openEvent.message}</p>
           <p className="meta">{new Date(openEvent.created_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'medium' })}</p>
+          <div className="sheet__actions">
+            <button className="button" onClick={() => props.onOpenDevice(openEvent.device_id)}>Open equipment</button>
+          </div>
         </Sheet>
       )}
     </div>

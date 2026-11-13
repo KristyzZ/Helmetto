@@ -5,86 +5,69 @@ import { Icon, type IconName } from './icons';
 import { useLive } from './live';
 import { showBrowserNotification } from './notify';
 import { Alerts } from './pages/Alerts';
-import { Dashboard } from './pages/Dashboard';
-import { Devices } from './pages/Devices';
+import { DevicePage } from './pages/DevicePage';
 import { MapPage } from './pages/MapPage';
-import { EVENT_ICON, alertTone, displayName, title, visibleAlerts } from './status';
+import { Overview } from './pages/Overview';
+import { EVENT_ICON, KIND_ICON, alertTone, attention, deviceStatus, kindOf, location as whereIs, title } from './status';
 import { useNow } from './time';
 
-type Tab = 'home' | 'map' | 'alerts' | 'devices';
+type Tab = 'home' | 'map' | 'alerts';
 const TABS: { id: Tab; label: string; icon: IconName }[] = [
-  { id: 'home', label: 'Home', icon: 'home' },
+  { id: 'home', label: 'Equipment', icon: 'grid' },
   { id: 'map', label: 'Map', icon: 'map' },
   { id: 'alerts', label: 'Alerts', icon: 'bell' },
-  { id: 'devices', label: 'Scooters', icon: 'scooter' },
 ];
 const isTab = (value: string): value is Tab => TABS.some((t) => t.id === value);
 
-const SELECTED_KEY = 'helmetto.device';
 const TOAST_MS = 5_000;
 
-interface Toast {
-  event: SafetyEvent;
-  /** Set when the event is about a scooter other than the one on screen. */
-  about: string | null;
+interface Route {
+  tab: Tab;
+  /** Equipment page open on the home tab. */
+  deviceId: string | null;
 }
 
-function readStored(key: string): string | null {
-  try {
-    return localStorage.getItem(key);
-  } catch {
-    return null;
-  }
+function readHash(): Route {
+  const hash = decodeURIComponent(location.hash.slice(1));
+  if (hash.startsWith('device/')) return { tab: 'home', deviceId: hash.slice(7) };
+  return { tab: isTab(hash) ? hash : 'home', deviceId: null };
 }
 
 export function App() {
-  const [tab, setTab] = useState<Tab>(() => {
-    const hash = location.hash.slice(1);
-    return isTab(hash) ? hash : 'home';
-  });
-  const [selectedId, setSelectedId] = useState<string | null>(() => readStored(SELECTED_KEY));
-  const [toast, setToast] = useState<Toast | null>(null);
+  const [route, setRoute] = useState<Route>(readHash);
+  const [mapId, setMapId] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ event: SafetyEvent; name: string } | null>(null);
   const [demoOpen, setDemoOpen] = useState(() => location.hash === '#demo');
   const logoTaps = useRef<number[]>([]);
   const toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const current = useRef<{ deviceId: string | null; names: Record<string, string> }>({ deviceId: null, names: {} });
+  const view = useRef({ route, names: {} as Record<string, string> });
 
   const live = useLive((event) => {
-    if (event.severity === 'alert') void showBrowserNotification(title(event.type), event.message, event.type);
-    // The screen already shows this scooter's alerts (hero, alert strip, Alerts tab),
-    // so a toast is only for what would otherwise go unseen: recoveries, and
-    // alerts about another scooter.
-    const other = event.device_id !== current.current.deviceId;
-    if (event.severity === 'alert' && !other) return;
-    setToast({ event, about: other ? (current.current.names[event.device_id] ?? null) : null });
+    const name = view.current.names[event.device_id] ?? event.device_id;
+    if (event.severity === 'alert') void showBrowserNotification(`${name}: ${title(event.type)}`, event.message, `${event.device_id}:${event.type}`);
+    // Alerts are already on screen on the overview, the alerts tab and that equipment's page.
+    const r = view.current.route;
+    const onScreen = r.tab === 'alerts' || (r.tab === 'home' && (r.deviceId === null || r.deviceId === event.device_id));
+    if (event.severity === 'alert' && onScreen) return;
+    setToast({ event, name });
     clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(null), TOAST_MS);
   });
 
   const now = useNow();
   const serverNow = now + live.clockOffsetMs;
-  const device = live.devices.find((d) => d.device_id === selectedId) ?? live.devices[0] ?? null;
-  const events = device ? (live.alerts[device.device_id] ?? []) : [];
-  const active = device ? visibleAlerts(device) : [];
-  current.current = {
-    deviceId: device?.device_id ?? null,
-    names: Object.fromEntries(live.devices.map((d) => [d.device_id, displayName(d)])),
-  };
+  const devices = live.devices;
+  const device = route.deviceId ? devices.find((d) => d.device_id === route.deviceId) ?? null : null;
+  const mapDevice =
+    devices.find((d) => d.device_id === mapId) ?? devices.find((d) => whereIs(d).position) ?? devices[0] ?? null;
+  view.current = { route, names: Object.fromEntries(devices.map((d) => [d.device_id, d.name])) };
 
-  const go = useCallback((next: Tab) => {
-    setTab(next);
-    history.replaceState(null, '', `#${next}`);
+  const navigate = useCallback((next: Route) => {
+    setRoute(next);
+    history.replaceState(null, '', next.deviceId ? `#device/${encodeURIComponent(next.deviceId)}` : `#${next.tab}`);
     window.scrollTo(0, 0);
   }, []);
-
-  const select = (deviceId: string) => {
-    setSelectedId(deviceId);
-    try {
-      localStorage.setItem(SELECTED_KEY, deviceId);
-    } catch {
-      // private mode: the choice just won't persist
-    }
-  };
+  const openDevice = (deviceId: string) => navigate({ tab: 'home', deviceId });
 
   // hidden demo panel: five quick taps on the logo
   const tapLogo = () => {
@@ -93,38 +76,33 @@ export function App() {
     if (logoTaps.current.length >= 5) {
       logoTaps.current = [];
       setDemoOpen(true);
+    } else if (logoTaps.current.length === 1) {
+      navigate({ tab: 'home', deviceId: null });
     }
   };
 
   useEffect(() => {
-    const onHash = () => {
-      const hash = location.hash.slice(1);
-      if (hash === 'demo') setDemoOpen(true);
-      else if (isTab(hash)) setTab(hash);
-    };
+    const onHash = () => (location.hash === '#demo' ? setDemoOpen(true) : setRoute(readHash()));
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
   const down = live.connection === 'down';
-  // Home shows alerts in the hero and Alerts lists them; other tabs get one slim strip.
-  const strip = device && !down && (tab === 'map' || tab === 'devices') ? active[0] : undefined;
+  const urgent = attention(devices);
+  const alertCount = urgent.filter((u) => u.alert !== 'scooter_offline').length;
+  // One slim strip for problems the current screen doesn't already show.
+  const strip =
+    !down && route.tab === 'map' ? urgent[0]
+    : !down && device ? urgent.find((u) => u.device.device_id !== device.device_id)
+    : undefined;
 
   return (
-    <div className={`app app--${tab}`}>
+    <div className={`app app--${route.tab}`}>
       <header className="topbar">
-        <button className="logo" onClick={tapLogo} aria-label="Helmetto">
+        <button className="logo" onClick={tapLogo} aria-label="Helmetto, all equipment">
           <img src="/icon.svg" alt="" width="28" height="28" />
+          <span>Helmetto</span>
         </button>
-        {device && live.devices.length > 1 ? (
-          <select className="topbar__select" value={device.device_id} onChange={(e) => select(e.target.value)} aria-label="Scooter">
-            {live.devices.map((d) => (
-              <option key={d.device_id} value={d.device_id}>{displayName(d)}</option>
-            ))}
-          </select>
-        ) : (
-          <span className="topbar__name">{device ? displayName(device) : 'Helmetto'}</span>
-        )}
         <span className="state topbar__link" title={`Server connection: ${live.connection}`}>
           <i className={`dot tone-${live.connection === 'live' ? 'ok' : down ? 'alert' : 'warn'} ${live.connection === 'live' ? 'dot--pulse' : ''}`} />
           {live.connection === 'live' ? 'Live' : down ? 'No connection' : 'Connecting'}
@@ -139,10 +117,10 @@ export function App() {
         </div>
       )}
       {strip && (
-        <button className={`strip tone-${alertTone(strip)}`} onClick={() => go('alerts')} role="alert">
-          <Icon name={EVENT_ICON[strip]} size={18} />
-          <strong>{title(strip)}</strong>
-          {active.length > 1 && <span>+{active.length - 1} more</span>}
+        <button className={`strip tone-${alertTone(strip.alert)}`} onClick={() => openDevice(strip.device.device_id)} role="alert">
+          <Icon name={EVENT_ICON[strip.alert]} size={18} />
+          <strong>{strip.device.name}: {title(strip.alert)}</strong>
+          {urgent.length > 1 && route.tab === 'map' && <span>+{urgent.length - 1}</span>}
           <Icon name="chevron" size={16} />
         </button>
       )}
@@ -151,31 +129,47 @@ export function App() {
         {!live.loaded ? (
           <div className="blank">
             {down ? (
-              <><Icon name="signalOff" size={28} /><strong>Can't load your scooters</strong><span>Trying again…</span></>
+              <><Icon name="signalOff" size={28} /><strong>Can't load your equipment</strong><span>Trying again…</span></>
             ) : (
               <div className="spinner" aria-label="Loading" />
             )}
           </div>
-        ) : !device ? (
+        ) : devices.length === 0 ? (
           <div className="blank">
-            <Icon name="scooter" size={28} />
-            <strong>No scooters yet</strong>
+            <Icon name="shield" size={28} />
+            <strong>No equipment yet</strong>
             <span>Add a device on the server to start.</span>
           </div>
-        ) : tab === 'home' ? (
-          <Dashboard device={device} events={events} serverNow={serverNow} onOpenMap={() => go('map')} onOpenAlerts={() => go('alerts')} />
-        ) : tab === 'map' ? (
-          <MapPage key={device.device_id} device={device} serverNow={serverNow} onSaved={live.applyState} />
-        ) : tab === 'alerts' ? (
-          <Alerts device={device} events={events} serverNow={serverNow} onOpenMap={() => go('map')} />
-        ) : (
-          <Devices
-            devices={live.devices}
-            selectedId={device.device_id}
+        ) : route.tab === 'home' && device ? (
+          <DevicePage
+            device={device}
+            events={live.alerts[device.device_id] ?? []}
             serverNow={serverNow}
-            onSelect={(id) => { select(id); go('home'); }}
+            onBack={() => navigate({ tab: 'home', deviceId: null })}
+            onOpenMap={() => { setMapId(device.device_id); navigate({ tab: 'map', deviceId: null }); }}
+            onOpenAlerts={() => navigate({ tab: 'alerts', deviceId: null })}
             onSaved={live.applyState}
           />
+        ) : route.tab === 'home' ? (
+          <Overview devices={devices} serverNow={serverNow} onOpen={openDevice} />
+        ) : route.tab === 'map' && mapDevice ? (
+          <>
+            <div className="map-switch" role="tablist" aria-label="Equipment on the map">
+              {devices.map((d) => {
+                const status = deviceStatus(d);
+                return (
+                  <button key={d.device_id} role="tab" aria-selected={d.device_id === mapDevice.device_id} onClick={() => setMapId(d.device_id)}>
+                    <Icon name={KIND_ICON[kindOf(d)]} size={16} />
+                    {d.name}
+                    <i className={`dot tone-${status.tone}`} />
+                  </button>
+                );
+              })}
+            </div>
+            <MapPage key={mapDevice.device_id} device={mapDevice} serverNow={serverNow} onSaved={live.applyState} />
+          </>
+        ) : (
+          <Alerts devices={devices} alerts={live.alerts} serverNow={serverNow} onOpenDevice={openDevice} />
         )}
       </main>
 
@@ -184,28 +178,33 @@ export function App() {
           className="toast"
           aria-live="polite"
           onClick={() => {
-            if (toast.about) select(toast.event.device_id);
+            openDevice(toast.event.device_id);
             setToast(null);
           }}
         >
           <i className={`dot tone-${toast.event.severity === 'alert' ? 'alert' : 'ok'}`} />
-          <strong>{toast.about ? `${toast.about}: ` : ''}{title(toast.event.type)}</strong>
+          <strong>{toast.name}: {title(toast.event.type)}</strong>
         </button>
       )}
 
       <nav className="tabbar">
         {TABS.map((item) => (
-          <button key={item.id} className="tab" onClick={() => go(item.id)} aria-current={tab === item.id ? 'page' : undefined}>
+          <button
+            key={item.id}
+            className="tab"
+            onClick={() => navigate({ tab: item.id, deviceId: null })}
+            aria-current={route.tab === item.id ? 'page' : undefined}
+          >
             <span className="tab__icon">
               <Icon name={item.icon} />
-              {item.id === 'alerts' && active.length > 0 && <b className={`badge tone-${alertTone(active[0]!)}`}>{active.length}</b>}
+              {item.id === 'alerts' && alertCount > 0 && <b className="badge tone-alert">{alertCount}</b>}
             </span>
             {item.label}
           </button>
         ))}
       </nav>
 
-      {demoOpen && <DemoPanel onClose={() => setDemoOpen(false)} />}
+      {demoOpen && <DemoPanel devices={devices} onClose={() => setDemoOpen(false)} />}
     </div>
   );
 }
