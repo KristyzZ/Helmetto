@@ -13,6 +13,10 @@ export interface Config {
   device: SeedDevice;
   /** Extra simulated devices (demo mode only): a forestry chainsaw. */
   demoDevices: SeedDevice[];
+  /** Demo workers and which equipment their tags are heard at (demo mode only). */
+  demoWorkers: DemoWorker[];
+  /** Worker tag each simulated device sends: [usual, the one "switch-worker" swaps to]. */
+  demoWorkerTags: Record<string, [string, string]>;
   demoMode: boolean;
   offlineTimeoutMs: number;
   webDist: string;
@@ -23,6 +27,19 @@ export const DEV_DEVICE_ID = 'scooter-001';
 export const DEV_DEVICE_API_KEY = 'dev-device-key-change-me';
 
 /** Simulated equipment for the fleet demo. Keys are random per server start. */
+export interface DemoWorker {
+  id: string;
+  name: string;
+  role: string;
+  tagId: string;
+}
+
+const DEMO_WORKERS: DemoWorker[] = [
+  { id: 'demo-w-tomas', name: 'Tomas Petraitis', role: 'Metalworker', tagId: 'TAG-0001' },
+  { id: 'demo-w-mantas', name: 'Mantas Jonaitis', role: 'Arborist', tagId: 'TAG-0002' },
+  { id: 'demo-w-lukas', name: 'Lukas Kazlauskas', role: 'Apprentice', tagId: 'TAG-0003' },
+];
+
 const DEMO_DEVICES: Omit<SeedDevice, 'apiKey'>[] = [
   {
     id: 'demo-chainsaw',
@@ -67,6 +84,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       autoLock: env.DEVICE_AUTO_LOCK === 'true',
     },
     demoDevices: demoMode ? DEMO_DEVICES.map((d) => ({ ...d, apiKey: randomBytes(18).toString('hex') })) : [],
+    demoWorkers: demoMode ? DEMO_WORKERS : [],
+    demoWorkerTags: demoMode
+      ? { [env.DEVICE_ID || DEV_DEVICE_ID]: ['TAG-0001', 'TAG-0003'], 'demo-chainsaw': ['TAG-0002', 'TAG-0003'] }
+      : {},
     demoMode,
     offlineTimeoutMs: Number(env.OFFLINE_TIMEOUT_MS) || OFFLINE_TIMEOUT_MS,
     webDist: path.join(REPO_ROOT, 'web', 'dist'),

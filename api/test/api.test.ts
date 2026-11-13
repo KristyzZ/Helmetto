@@ -1,6 +1,6 @@
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { AlertsResponse, CreateDeviceResponse, DeviceState, DevicesResponse, ReportResponse, SafetyEvent } from '@helmetto/shared';
+import type { AlertsResponse, CreateDeviceResponse, DeviceState, DevicesResponse, ReportResponse, SafetyEvent, Worker, WorkersResponse } from '@helmetto/shared';
 import { createApp } from '../src/app';
 import type { Config } from '../src/config';
 import { Store } from '../src/db';
@@ -11,6 +11,8 @@ const config: Config = {
   databasePath: ':memory:',
   device: { id: 'test-scooter', apiKey: 'test-key', name: 'Test scooter', childName: null },
   demoDevices: [],
+  demoWorkers: [],
+  demoWorkerTags: {},
   demoMode: false,
   offlineTimeoutMs: 30_000,
   webDist: '/nonexistent',
@@ -429,6 +431,77 @@ describe('new features', () => {
     expect((await json('DELETE', `/api/devices/${created.device.device_id}`)).status).toBe(204);
     expect((await fetch(`${base}/api/devices/${created.device.device_id}/state`)).status).toBe(404);
     expect((await json('DELETE', `/api/devices/${created.device.device_id}`)).status).toBe(404);
+  });
+});
+
+describe('workers', () => {
+  const json = (method: string, url: string, body?: unknown) =>
+    fetch(`${base}${url}`, { method, headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
+  let mantas: Worker;
+  let lukas: Worker;
+
+  it('adds workers with generated or chosen tag IDs', async () => {
+    const r1 = await json('POST', '/api/workers', { name: 'Mantas Jonaitis', role: 'Arborist' });
+    expect(r1.status).toBe(201);
+    mantas = (await r1.json()) as Worker;
+    expect(mantas.tag_id).toBe('TAG-0001');
+    const r2 = await json('POST', '/api/workers', { name: 'Lukas', tag_id: 'badge-77' });
+    lukas = (await r2.json()) as Worker;
+    expect(lukas.tag_id).toBe('BADGE-77');
+    const { workers } = (await (await fetch(`${base}/api/workers`)).json()) as WorkersResponse;
+    expect(workers.map((w) => w.name)).toEqual(['Lukas', 'Mantas Jonaitis']);
+  });
+
+  it('rejects duplicate and malformed tags', async () => {
+    expect((await json('POST', '/api/workers', { name: 'X', tag_id: 'tag-0001' })).status).toBe(409);
+    expect((await json('POST', '/api/workers', { name: 'X', tag_id: 'has space' })).status).toBe(400);
+    expect((await json('PATCH', `/api/workers/${lukas.worker_id}`, { tag_id: 'TAG-0001' })).status).toBe(409);
+    expect((await post(reading({ worker_tag: 'bad tag!' }))).status).toBe(400);
+  });
+
+  it('identifies the worker at the equipment and puts them on events', async () => {
+    await post(reading({ worker_tag: 'tag-0001' }));
+    let s = await state();
+    expect(s.worker_id).toBe(mantas.worker_id);
+    expect(s.worker_name).toBe('Mantas Jonaitis');
+
+    await post(reading({ worker_tag: 'TAG-0001', helmet_connected: false }));
+    const { alerts } = (await (await fetch(`${base}/api/devices/test-scooter/alerts?limit=1`)).json()) as AlertsResponse;
+    expect(alerts[0]).toMatchObject({ type: 'unprotected_use', worker_id: mantas.worker_id });
+    expect(alerts[0]?.message).toContain('Mantas Jonaitis');
+
+    // Lukas takes over; an unknown tag identifies nobody
+    await post(reading({ worker_tag: 'BADGE-77' }));
+    expect((await state()).worker_name).toBe('Lukas');
+    await post(reading({ worker_tag: 'TAG-9999' }));
+    s = await state();
+    expect(s.worker_id).toBeNull();
+    await post(reading({ worker_tag: null }));
+    expect((await state()).worker_id).toBeNull();
+  });
+
+  it('reports protection per worker', async () => {
+    await post(reading({ equipment_active: true, worker_tag: 'TAG-0001' }));
+    now += 5_000;
+    await post(reading({ equipment_active: true, worker_tag: 'TAG-0001', helmet_connected: false }));
+    now += 5_000;
+    await post(reading({ equipment_active: true, worker_tag: 'TAG-0001' }));
+    const report = (await (await fetch(`${base}/api/report?days=1`)).json()) as ReportResponse;
+    const m = report.workers!.find((w) => w.worker_id === mantas.worker_id)!;
+    expect(m.in_use_s).toBe(10);
+    expect(m.unprotected_s).toBe(5);
+    expect(m.incidents).toBe(2); // one earlier, one now
+    expect(m.compliance).toBe(0.5);
+  });
+
+  it('renames and removes workers', async () => {
+    const renamed = (await (await json('PATCH', `/api/workers/${mantas.worker_id}`, { name: 'Mantas J.' })).json()) as Worker;
+    expect(renamed).toMatchObject({ name: 'Mantas J.', tag_id: 'TAG-0001' });
+    expect((await state()).worker_name).toBe('Mantas J.');
+    expect((await json('DELETE', `/api/workers/${lukas.worker_id}`)).status).toBe(204);
+    expect((await json('DELETE', `/api/workers/${lukas.worker_id}`)).status).toBe(404);
+    expect((await json('DELETE', `/api/workers/${mantas.worker_id}`)).status).toBe(204);
+    expect((await state()).worker_id).toBeNull();
   });
 });
 

@@ -38,6 +38,7 @@ export class DemoRunner {
         baseUrl: `http://127.0.0.1:${this.config.port}`,
         deviceId,
         apiKey: device.apiKey,
+        workerTags: this.config.demoWorkerTags[deviceId],
         log: (line) => console.log(`[demo ${deviceId}] ${line}`),
       });
       this.simulators.set(deviceId, simulator);

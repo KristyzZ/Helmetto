@@ -12,14 +12,24 @@ import {
   type CreateDeviceRequest,
   type DeviceUpdate,
   type DevicesResponse,
+  type WorkersResponse,
   type Telemetry,
   type TelemetryAccepted,
 } from '@helmetto/shared';
 import type { Config } from './config';
 import type { Store } from './db';
 import type { DemoRunner } from './demo';
-import type { SafetyService } from './service';
-import { acknowledgeSchema, createDeviceSchema, deviceUpdateSchema, geofenceSchema, telemetrySchema, validationError } from './validation';
+import { TagInUseError, type SafetyService } from './service';
+import {
+  acknowledgeSchema,
+  createDeviceSchema,
+  createWorkerSchema,
+  deviceUpdateSchema,
+  geofenceSchema,
+  telemetrySchema,
+  validationError,
+  workerUpdateSchema,
+} from './validation';
 import { reportCsv } from './report';
 
 const SSE_KEEPALIVE_MS = 15_000;
@@ -88,6 +98,43 @@ export function createApp(deps: {
       return fail(res, 409, 'configured_device', 'This device is configured on the server (DEVICE_ID) and comes back on restart');
     }
     if (!service.deleteDevice(deviceId)) return fail(res, 404, 'unknown_device', 'No such device');
+    res.status(204).end();
+  });
+
+  // ---- Workers ---------------------------------------------------------------------
+  const tagConflict = (res: Response, error: unknown) => {
+    if (error instanceof TagInUseError) return fail(res, 409, 'tag_in_use', error.message);
+    throw error;
+  };
+
+  app.get(ROUTE_PATTERNS.workers, (_req, res) => {
+    res.json({ workers: service.listWorkers() } satisfies WorkersResponse);
+  });
+
+  app.post(ROUTE_PATTERNS.workers, (req, res) => {
+    const parsed = createWorkerSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json(validationError(parsed.error));
+    try {
+      res.status(201).json(service.createWorker(parsed.data));
+    } catch (error) {
+      tagConflict(res, error);
+    }
+  });
+
+  app.patch(ROUTE_PATTERNS.worker, (req, res) => {
+    const parsed = workerUpdateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json(validationError(parsed.error));
+    try {
+      const worker = service.updateWorker(String(req.params.workerId), parsed.data);
+      if (!worker) return fail(res, 404, 'unknown_worker', 'No such worker');
+      res.json(worker);
+    } catch (error) {
+      tagConflict(res, error);
+    }
+  });
+
+  app.delete(ROUTE_PATTERNS.worker, (req, res) => {
+    if (!service.deleteWorker(String(req.params.workerId))) return fail(res, 404, 'unknown_worker', 'No such worker');
     res.status(204).end();
   });
 
@@ -160,10 +207,14 @@ export function createApp(deps: {
     const onAlert = (alert: unknown) => send('alert', alert);
     const onAlertUpdate = (event: unknown) => send('alert_update', event);
     const onRemoved = (removed: unknown) => send('device_removed', removed);
+    const onWorker = (worker: unknown) => send('worker', worker);
+    const onWorkerRemoved = (removed: unknown) => send('worker_removed', removed);
     service.on('state', onState);
     service.on('alert', onAlert);
     service.on('alert_update', onAlertUpdate);
     service.on('device_removed', onRemoved);
+    service.on('worker', onWorker);
+    service.on('worker_removed', onWorkerRemoved);
     const keepalive = setInterval(() => res.write(': keepalive\n\n'), SSE_KEEPALIVE_MS);
     req.on('close', () => {
       clearInterval(keepalive);
@@ -171,6 +222,8 @@ export function createApp(deps: {
       service.off('alert', onAlert);
       service.off('alert_update', onAlertUpdate);
       service.off('device_removed', onRemoved);
+      service.off('worker', onWorker);
+      service.off('worker_removed', onWorkerRemoved);
     });
   });
 

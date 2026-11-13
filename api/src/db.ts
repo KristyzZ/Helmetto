@@ -11,6 +11,7 @@ import {
   type LastLocation,
   type SafetyEvent,
   type Telemetry,
+  type Worker,
 } from '@helmetto/shared';
 
 export const DEMO_PARENT_ID = 'parent-demo';
@@ -56,12 +57,29 @@ CREATE TABLE IF NOT EXISTS daily_stats (
   missed TEXT NOT NULL DEFAULT '{}',
   PRIMARY KEY (device_id, day)
 );
+CREATE TABLE IF NOT EXISTS workers (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  role TEXT,
+  tag_id TEXT NOT NULL UNIQUE,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS worker_daily_stats (
+  device_id TEXT NOT NULL, -- holds the worker id; same shape as daily_stats
+  day TEXT NOT NULL,
+  in_use_s REAL NOT NULL DEFAULT 0,
+  unprotected_s REAL NOT NULL DEFAULT 0,
+  incidents INTEGER NOT NULL DEFAULT 0,
+  missed TEXT NOT NULL DEFAULT '{}',
+  PRIMARY KEY (device_id, day)
+);
 `;
 
 /** Event columns added after the first release. */
 const ADDED_EVENT_COLUMNS: Record<string, string> = {
   acknowledged_at: 'INTEGER',
   acknowledged_by: 'TEXT',
+  worker_id: 'TEXT',
 };
 
 /** Columns added after the first release; applied to existing databases on start. */
@@ -158,8 +176,21 @@ function toEvent(raw: Raw): SafetyEvent {
     longitude: raw.longitude ?? null,
     acknowledged_at: raw.acknowledged_at ? new Date(raw.acknowledged_at).toISOString() : null,
     acknowledged_by: raw.acknowledged_by ?? null,
+    worker_id: raw.worker_id ?? null,
   };
 }
+
+function toWorker(raw: Raw): Worker {
+  return {
+    worker_id: raw.id,
+    name: raw.name,
+    role: raw.role ?? null,
+    tag_id: raw.tag_id,
+    created_at: new Date(raw.created_at).toISOString(),
+  };
+}
+
+type StatsTable = 'daily_stats' | 'worker_daily_stats';
 
 /** One device's numbers for one day. */
 export interface DayStats {
@@ -283,8 +314,8 @@ export class Store {
   addEvent(event: Omit<SafetyEvent, 'id' | 'created_at'> & { created_at: number }): SafetyEvent {
     const result = this.db
       .prepare(
-        `INSERT INTO events (device_id, type, severity, message, created_at, latitude, longitude)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO events (device_id, type, severity, message, created_at, latitude, longitude, worker_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         event.device_id,
@@ -294,6 +325,7 @@ export class Store {
         event.created_at,
         event.latitude,
         event.longitude,
+        event.worker_id ?? null,
       );
     return { ...event, id: Number(result.lastInsertRowid), created_at: new Date(event.created_at).toISOString() };
   }
@@ -332,13 +364,13 @@ export class Store {
   }
 
   /** Add time and incidents to one device's day. */
-  addDayStats(deviceId: string, day: string, delta: Omit<DayStats, 'device_id' | 'day'>): void {
-    const row = this.db.prepare('SELECT missed FROM daily_stats WHERE device_id = ? AND day = ?').get(deviceId, day) as Raw | undefined;
+  addDayStats(deviceId: string, day: string, delta: Omit<DayStats, 'device_id' | 'day'>, table: StatsTable = 'daily_stats'): void {
+    const row = this.db.prepare(`SELECT missed FROM ${table} WHERE device_id = ? AND day = ?`).get(deviceId, day) as Raw | undefined;
     const missed: Record<string, number> = row ? JSON.parse(row.missed) : {};
     for (const [type, count] of Object.entries(delta.missed)) missed[type] = (missed[type] ?? 0) + (count ?? 0);
     this.db
       .prepare(
-        `INSERT INTO daily_stats (device_id, day, in_use_s, unprotected_s, incidents, missed) VALUES (?, ?, ?, ?, ?, ?)
+        `INSERT INTO ${table} (device_id, day, in_use_s, unprotected_s, incidents, missed) VALUES (?, ?, ?, ?, ?, ?)
          ON CONFLICT(device_id, day) DO UPDATE SET
            in_use_s = in_use_s + excluded.in_use_s,
            unprotected_s = unprotected_s + excluded.unprotected_s,
@@ -348,8 +380,9 @@ export class Store {
       .run(deviceId, day, delta.in_use_s, delta.unprotected_s, delta.incidents, JSON.stringify(missed));
   }
 
-  listDayStats(fromDay: string): DayStats[] {
-    const rows = this.db.prepare('SELECT * FROM daily_stats WHERE day >= ? ORDER BY day').all(fromDay) as Raw[];
+  /** For worker_daily_stats, device_id holds the worker id. */
+  listDayStats(fromDay: string, table: StatsTable = 'daily_stats'): DayStats[] {
+    const rows = this.db.prepare(`SELECT * FROM ${table} WHERE day >= ? ORDER BY day`).all(fromDay) as Raw[];
     return rows.map((r) => ({
       device_id: r.device_id,
       day: r.day,
@@ -379,6 +412,42 @@ export class Store {
     const removed = rows.map((r) => r.id as string).filter((id) => !keep.includes(id));
     for (const id of removed) this.deleteDevice(id);
     return removed;
+  }
+
+  listWorkers(): Worker[] {
+    return (this.db.prepare('SELECT * FROM workers ORDER BY name COLLATE NOCASE, id').all() as Raw[]).map(toWorker);
+  }
+
+  getWorker(workerId: string): Worker | null {
+    const row = this.db.prepare('SELECT * FROM workers WHERE id = ?').get(workerId) as Raw | undefined;
+    return row ? toWorker(row) : null;
+  }
+
+  workerByTag(tagId: string): Worker | null {
+    const row = this.db.prepare('SELECT * FROM workers WHERE tag_id = ?').get(tagId.toUpperCase()) as Raw | undefined;
+    return row ? toWorker(row) : null;
+  }
+
+  /** Insert, or do nothing if the id or tag exists (demo seeding). */
+  insertWorker(worker: { id: string; name: string; role: string | null; tagId: string }, ifMissing = false): Worker {
+    this.db
+      .prepare(`INSERT ${ifMissing ? 'OR IGNORE ' : ''}INTO workers (id, name, role, tag_id, created_at) VALUES (?, ?, ?, ?, ?)`)
+      .run(worker.id, worker.name, worker.role, worker.tagId.toUpperCase(), Date.now());
+    return this.getWorker(worker.id)!;
+  }
+
+  updateWorker(workerId: string, fields: { name: string; role: string | null; tagId: string }): Worker | null {
+    this.db
+      .prepare('UPDATE workers SET name = ?, role = ?, tag_id = ? WHERE id = ?')
+      .run(fields.name, fields.role, fields.tagId.toUpperCase(), workerId);
+    return this.getWorker(workerId);
+  }
+
+  deleteWorker(workerId: string): boolean {
+    return this.transaction(() => {
+      this.db.prepare('DELETE FROM worker_daily_stats WHERE device_id = ?').run(workerId);
+      return Number(this.db.prepare('DELETE FROM workers WHERE id = ?').run(workerId).changes) > 0;
+    });
   }
 
   close(): void {

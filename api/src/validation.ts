@@ -9,6 +9,7 @@ import {
   EQUIPMENT_KINDS,
   GEAR_TYPES,
   NAME_MAX_LENGTH,
+  WORKER_TAG_PATTERN,
   type ApiError,
   type Geofence,
 } from '@helmetto/shared';
@@ -44,6 +45,13 @@ export const telemetrySchema = z.object({
       .max(12),
   ),
   locked: nullable(z.boolean()),
+  worker_tag: nullable(
+    z
+      .string()
+      .trim()
+      .transform((v) => v.toUpperCase())
+      .refine((v) => WORKER_TAG_PATTERN.test(v), 'worker_tag must be 1-32 letters, digits, - or _'),
+  ),
 });
 
 const circleSchema = z.object({
@@ -115,6 +123,22 @@ export const createDeviceSchema = z.object({
   required_gear: z.array(z.enum(GEAR_TYPES as [string, ...string[]])).max(GEAR_TYPES.length).optional(),
   auto_lock: z.boolean().optional(),
 });
+
+const tagSchema = z
+  .string()
+  .trim()
+  .transform((v) => v.toUpperCase())
+  .refine((v) => WORKER_TAG_PATTERN.test(v), 'tag_id must be 1-32 letters, digits, - or _');
+
+export const createWorkerSchema = z.object({
+  name: nameSchema,
+  role: optionalName,
+  tag_id: tagSchema.optional(),
+});
+
+export const workerUpdateSchema = z
+  .object({ name: nameSchema.optional(), role: optionalName, tag_id: tagSchema.optional() })
+  .refine((v) => Object.values(v).some((x) => x !== undefined), 'send at least one field to change');
 
 export const acknowledgeSchema = z.object({ by: optionalName }).default({});
 

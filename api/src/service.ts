@@ -8,6 +8,7 @@ import {
   emptyStats,
   exposureBetween,
   lastDays,
+  nextWorkerTag,
   sumStats,
   evaluateGeofenceChange,
   evaluateHeartbeat,
@@ -29,6 +30,10 @@ import {
   type GearType,
   type ReportResponse,
   type ReportStats,
+  type CreateWorkerRequest,
+  type Worker,
+  type WorkerReport,
+  type WorkerUpdate,
   type Geofence,
   type SafetyEvent,
   type SafetyEventType,
@@ -62,8 +67,8 @@ function gearList(types: readonly GearType[]): string {
 }
 
 /** One short sentence per event, e.g. "Mantas is using Chainsaw 2 without chaps." */
-function message(type: SafetyEventType, device: DeviceRow): string {
-  const who = device.childName;
+function message(type: SafetyEventType, device: DeviceRow, workerName: string | null): string {
+  const who = workerName ?? device.childName;
   const name = device.name;
   const kind = EQUIPMENT_INFO[device.kind];
   const t = device.telemetry;
@@ -103,9 +108,17 @@ function message(type: SafetyEventType, device: DeviceRow): string {
   }
 }
 
+/** A tag ID is already used by another worker. */
+export class TagInUseError extends Error {
+  constructor(tag: string) {
+    super(`Tag ${tag} is already used by another worker`);
+  }
+}
+
 /**
  * Applies the ai/ safety rules to stored state and announces what changed.
- * Emits 'state' (DeviceState) and 'alert' (SafetyEvent) for the SSE stream.
+ * Emits 'state' (DeviceState), 'alert' / 'alert_update' (SafetyEvent),
+ * 'device_removed', 'worker' and 'worker_removed' for the SSE stream.
  */
 export class SafetyService extends EventEmitter {
   constructor(
@@ -124,7 +137,10 @@ export class SafetyService extends EventEmitter {
     const t = device.telemetry;
     const online = device.lastSeenAt !== null && !device.conditions.scooter_offline;
     const check = t && online ? checkProtection(t, profileOf(device)) : null;
+    const worker = online ? this.workerIn(t) : null;
     return {
+      worker_id: worker?.worker_id ?? null,
+      worker_name: worker?.name ?? null,
       device_id: device.id,
       name: device.name,
       child_name: device.childName,
@@ -159,9 +175,16 @@ export class SafetyService extends EventEmitter {
     return device ? this.toState(device) : null;
   }
 
+  /** The worker the equipment identifies in a reading; null = nobody or unknown tag. */
+  private workerIn(telemetry: Telemetry | null): Worker | null {
+    const tag = telemetry?.worker_tag;
+    return tag ? this.store.workerByTag(tag) : null;
+  }
+
   /** Persist the evaluation, log its events, then notify listeners. */
   private commit(device: DeviceRow, evaluation: Evaluation, at: number): SafetyEvent[] {
     device.conditions = evaluation.conditions;
+    const worker = this.workerIn(device.telemetry);
     const events = this.store.transaction(() => {
       this.store.saveDevice(device);
       return evaluation.events.map((type) =>
@@ -169,8 +192,9 @@ export class SafetyService extends EventEmitter {
           device_id: device.id,
           type,
           severity: EVENT_INFO[type].severity,
-          message: message(type, device),
+          message: message(type, device, worker?.name ?? null),
           created_at: at,
+          worker_id: worker?.worker_id ?? null,
           latitude: device.lastLocation?.latitude ?? null,
           longitude: device.lastLocation?.longitude ?? null,
         }),
@@ -201,11 +225,22 @@ export class SafetyService extends EventEmitter {
     const exposure = exposureBetween(previous && { at: previous.at, inUse: previous.inUse, unprotected: previous.unprotected }, at);
     const incident = evaluation.events.includes('unprotected_use');
     if (exposure.in_use_s > 0 || incident) {
-      this.store.addDayStats(device.id, dayOf(at), {
+      const delta = {
         ...exposure,
         incidents: incident ? 1 : 0,
         missed: incident ? Object.fromEntries(evaluation.protection.unsafe.map((g) => [g, 1])) : {},
-      });
+      };
+      this.store.addDayStats(device.id, dayOf(at), delta);
+      // Per worker: time goes to whoever was identified in the previous reading,
+      // a new incident to whoever is identified now.
+      const before = previous ? this.workerIn(device.telemetry) : null;
+      const now = this.workerIn(input);
+      if (before && exposure.in_use_s > 0) {
+        this.store.addDayStats(before.worker_id, dayOf(at), { ...exposure, incidents: 0, missed: {} }, 'worker_daily_stats');
+      }
+      if (now && incident) {
+        this.store.addDayStats(now.worker_id, dayOf(at), { in_use_s: 0, unprotected_s: 0, incidents: 1, missed: delta.missed }, 'worker_daily_stats');
+      }
     }
 
     device.telemetry = telemetry;
@@ -303,7 +338,63 @@ export class SafetyService extends EventEmitter {
     }));
     const perDay = dayList.map((day) => ({ day, ...sumStats(live.filter((r) => r.day === day).map(strip)) }));
     const totals: ReportStats = live.length ? sumStats(live.map(strip)) : emptyStats();
-    return { from: dayList[0]!, to: dayList[dayList.length - 1]!, totals, devices: perDevice, days: perDay };
+    const workerRows = this.store.listDayStats(dayList[0]!, 'worker_daily_stats');
+    const perWorker: WorkerReport[] = this.store.listWorkers().map((w) => ({
+      worker_id: w.worker_id,
+      name: w.name,
+      tag_id: w.tag_id,
+      ...sumStats(workerRows.filter((r) => r.device_id === w.worker_id).map(strip)),
+    }));
+    return { from: dayList[0]!, to: dayList[dayList.length - 1]!, totals, devices: perDevice, days: perDay, workers: perWorker };
+  }
+
+  // ---- workers ---------------------------------------------------------------------
+
+  listWorkers(): Worker[] {
+    return this.store.listWorkers();
+  }
+
+  createWorker(input: CreateWorkerRequest): Worker {
+    const tag = (input.tag_id ?? nextWorkerTag(this.store.listWorkers().map((w) => w.tag_id))).toUpperCase();
+    if (this.store.workerByTag(tag)) throw new TagInUseError(tag);
+    const worker = this.store.insertWorker({
+      id: `w-${randomBytes(3).toString('hex')}`,
+      name: input.name,
+      role: input.role ?? null,
+      tagId: tag,
+    });
+    this.emit('worker', worker);
+    return worker;
+  }
+
+  updateWorker(workerId: string, update: WorkerUpdate): Worker | null {
+    const worker = this.store.getWorker(workerId);
+    if (!worker) return null;
+    const tag = (update.tag_id ?? worker.tag_id).toUpperCase();
+    const owner = this.store.workerByTag(tag);
+    if (owner && owner.worker_id !== workerId) throw new TagInUseError(tag);
+    const updated = this.store.updateWorker(workerId, {
+      name: update.name ?? worker.name,
+      role: update.role !== undefined ? update.role : worker.role,
+      tagId: tag,
+    })!;
+    this.emit('worker', updated);
+    this.refreshDevices();
+    return updated;
+  }
+
+  deleteWorker(workerId: string): boolean {
+    const removed = this.store.deleteWorker(workerId);
+    if (removed) {
+      this.emit('worker_removed', { worker_id: workerId });
+      this.refreshDevices();
+    }
+    return removed;
+  }
+
+  /** Re-send every device's state (worker names or tags changed). */
+  private refreshDevices(): void {
+    for (const device of this.store.listDevices()) this.emit('state', this.toState(device));
   }
 
   /** Mark devices that went silent as offline. Called on a timer. */
