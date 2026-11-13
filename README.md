@@ -87,9 +87,9 @@ when the server runs with `DEMO_MODE=true` (the default locally).
 
 ## Screens
 
-| All protected | Alert | Equipment (locked) | Report |
+| All protected | Alert | People | Report |
 |---|---|---|---|
-| ![All protected](docs/screenshots/overview-all-protected-light.png) | ![Alert on the overview](docs/screenshots/overview-alert-light.png) | ![Chainsaw locked](docs/screenshots/equipment-chainsaw-locked-dark.png) | ![Report](docs/screenshots/report-light.png) |
+| ![All protected](docs/screenshots/overview-all-protected-light.png) | ![Alert on the overview](docs/screenshots/overview-alert-light.png) | ![People](docs/screenshots/people-light.png) | ![Report](docs/screenshots/report-light.png) |
 
 More in [`docs/screenshots/`](docs/screenshots), in light and dark mode.
 
@@ -102,6 +102,11 @@ More in [`docs/screenshots/`](docs/screenshots), in light and dark mode.
   battery, map. **Lock now / Unlock** locks the tool from the app (needs lock
   hardware). The sliders icon opens settings: name, who uses it, site, type,
   required gear, auto-lock, and **Remove equipment**.
+- **People** tab: everyone whose gear carries a worker tag, where they are
+  (which equipment and site) and whether they're protected right now. A
+  person's page shows their gear, today's protection record and their alerts.
+  **Add person** gives them a tag ID (e.g. `TAG-0004`) to program into their
+  gear tags.
 - **Map** tab: pick a piece of equipment, see it live, draw its work area
   (tap corners, drag, tap **+** to add one) or use a circle.
 - **Alerts** tab: what needs attention now across all equipment, and history.
@@ -109,8 +114,8 @@ More in [`docs/screenshots/`](docs/screenshots), in light and dark mode.
   the badge only counts alerts nobody has acknowledged.
 - **Report** tab: share of in-use time with all required gear (today, 7 or 30
   days), incidents, time without gear, a per-day chart, a per-equipment
-  breakdown, which gear is missed most, and a CSV download for safety
-  inspections.
+  breakdown, a per-person breakdown, which gear is missed most, and a CSV
+  download for safety inspections.
 
 ## How the safety logic behaves
 
@@ -145,6 +150,9 @@ short version for Render is **New → Blueprint → this repo**, which reads
 - One hardware device is seeded from env vars (plus a simulated chainsaw in
   demo mode); more can be added in the app. The demo panel can only simulate
   the seeded ones.
+- A person's location is the location of the equipment that hears their
+  tags: nothing is tracked when they're away from equipment. Check this with
+  the works council / GDPR rules before using it with real employees.
 - Report time is counted between readings (gaps over 15 s count as 15 s), in
   UTC days.
 - Locking is only a signal in the telemetry response: the current firmware

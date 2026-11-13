@@ -49,6 +49,16 @@ Send one reading about every **5 seconds** while the scooter is on.
 | `equipment_active` | boolean \| null, optional | `true` while the equipment is in use: tool switched on, saw running. `null`/missing = can't tell; the server then assumes a reporting device is in use. |
 | `gear` | array \| null, optional | One entry per paired gear tag: `{"type": "...", "connected": true, "worn": null}`. See below. When present it is used instead of `helmet_connected` / `helmet_worn`. |
 | `locked` | boolean \| null, optional | `true` while the equipment is locked out. `null` = no lock hardware. |
+| `worker_tag` | string \| null, optional | Worker ID carried by the gear tags the equipment hears, e.g. `"TAG-0002"` (1–32 letters, digits, `-`, `_`; case-insensitive). Identifies who is at the station. `null`/missing = nobody identified. |
+
+#### Worker tags (`worker_tag`)
+
+Each person gets a tag ID in the app (People → Add person, e.g. `TAG-0002`).
+Program that ID into their gear tags and include it in their ESP-NOW
+heartbeat; the equipment sends the ID it currently hears as `worker_tag`. The
+server matches it to the person, puts their name on the equipment, on alerts
+and in the report, and shows where they are (that equipment's site and GPS).
+An unknown tag is ignored.
 
 #### Gear tags (`gear`)
 
@@ -291,6 +301,7 @@ All equipment of the account.
 - `in_use`: from `equipment_active` (unknown counts as in use); `null` while offline or never reported.
 - `lock_engaged`: the server is currently answering `lock: true` to this device (auto-lock for missing gear, or `manual_lock`).
 - `manual_lock`: a manager locked it from the app.
+- `worker_id` / `worker_name`: the person identified by `worker_tag` in the latest reading; `null` = nobody, unknown tag, or offline.
 - `geofence` is `null` when no zone is set; see `PUT .../geofence` below for its two shapes.
 - `online: false` with `last_seen_at: null` → the scooter has never reported.
 - `online: false` otherwise → **scooter offline**; `telemetry` is the *last known*
@@ -432,6 +443,26 @@ Remove equipment with its history and report data. `204` on success. The
 device configured on the server (`DEVICE_ID`) can't be removed (`409`): it
 would come back on the next restart.
 
+### Workers
+
+```
+GET    /api/workers                 -> { "workers": Worker[] }
+POST   /api/workers                 {"name":"Rasa","role":"Welder","tag_id":"TAG-0004"}  -> 201 Worker
+PATCH  /api/workers/:workerId       {"name":"...","role":"...","tag_id":"..."}  -> Worker
+DELETE /api/workers/:workerId       -> 204
+```
+
+```json
+{ "worker_id": "w-3fa9c1", "name": "Mantas Jonaitis", "role": "Arborist", "tag_id": "TAG-0002", "created_at": "2026-11-13T10:00:00.000Z" }
+```
+
+- `tag_id` is optional on create: the next free `TAG-000n` is used. It is
+  stored upper-case and must be unique (`409 tag_in_use` otherwise).
+- Where a worker is comes from the equipment: find the online device whose
+  `worker_id` is theirs (most recent `last_seen_at` if several).
+- Every `SafetyEvent` has `worker_id`: who was at the equipment when it happened.
+- Removing a worker keeps past events; their `worker_id` then matches nobody.
+
 ### `POST /api/alerts/:eventId/acknowledge`
 
 Mark an alert as seen. Body (optional): `{"by":"Kipras"}`. Returns the updated
@@ -459,6 +490,8 @@ Protection statistics for the last 1–90 UTC days, today included.
 - `compliance`: `1 - unprotected_s / in_use_s`, or `null` if not used.
 - `incidents`: "No protection" alerts that started; `missed`: which gear was
   missing when they started.
+- `workers`: the same numbers per person, counting only time the equipment
+  identified them by `worker_tag`.
 
 `GET /api/report.csv?days=7` returns the same as a CSV file (one row per
 equipment plus a total), for Excel / Google Sheets.
@@ -474,6 +507,8 @@ Live updates. Named events, each `data:` line is JSON:
 | `alert` | `SafetyEvent` (same shape as in `/alerts`) | A new alert or recovery was logged |
 | `alert_update` | `SafetyEvent` | An existing alert changed (acknowledged) |
 | `device_removed` | `{ "device_id": "..." }` | Equipment was removed |
+| `worker` | `Worker` | A person was added or changed |
+| `worker_removed` | `{ "worker_id": "..." }` | A person was removed |
 
 A `: keepalive` comment is sent every 15 s. Clients that can't use SSE can poll
 `GET /api/devices` instead.
@@ -501,8 +536,11 @@ demo (the earlier `demo-boat`) are removed on start.
 - `{"scenario":"start-all"}` starts every device in normal use; `{"scenario":"stop"}`
   stops all of them (or only `device_id` if given).
 
-Scenarios: `normal`, `gear-removed`, `gear-back`, `idle`, `crash`,
-`geofence-exit`, `offline`. The original `helmet-disconnect`,
+Scenarios: `normal`, `gear-removed`, `gear-back`, `idle` (also: nobody at the
+station), `switch-worker` (another person takes over), `crash`,
+`geofence-exit`, `offline`. Demo mode adds three people: Tomas (TAG-0001, at
+the grinder), Mantas (TAG-0002, at the chainsaw) and Lukas (TAG-0003, takes
+over in `switch-worker`). The original `helmet-disconnect`,
 `helmet-reconnect` and `helmet-not-worn` still work.
 
 The simulator (also `npm run simulate`) sends real telemetry to
