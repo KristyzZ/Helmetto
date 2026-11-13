@@ -137,13 +137,15 @@ export function EquipmentSettings(props: {
         </button>
       </div>
 
-      {!confirmRemove ? (
+      {device.removable === false ? (
+        <p className="meta">Set up on the server (DEVICE_ID), so it can't be removed here.</p>
+      ) : !confirmRemove ? (
         <button className="text-button text-button--danger" onClick={() => setConfirmRemove(true)}>
-          Remove equipment
+          <Icon name="trash" size={16} /> Remove equipment
         </button>
       ) : (
         <div className="confirm">
-          <p>Remove {device.name} and its alert history? Its tag will no longer be accepted.</p>
+          <p>Remove {device.name}? Its alerts and report data are deleted and its tag is no longer accepted. This can't be undone.</p>
           <div className="sheet__actions">
             <button className="button" onClick={() => setConfirmRemove(false)}>Cancel</button>
             <button className="button button--danger-solid" disabled={busy} onClick={remove}>

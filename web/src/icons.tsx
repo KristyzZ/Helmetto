@@ -41,6 +41,7 @@ const PATHS: Record<string, ReactNode> = {
   download: <><path d="M12 4v11" /><path d="m7 10.500 5 5 5-5" /><path d="M5 20h14" /></>,
   users: <><circle cx="9" cy="8.500" r="3.200" /><path d="M3 19.500a6 6 0 0 1 12 0" /><path d="M15.500 5.500a3 3 0 0 1 0 6" /><path d="M17.500 14.200a5.500 5.500 0 0 1 3.500 5.300" /></>,
   badge: <><rect x="4" y="3.500" width="16" height="17" rx="2.500" /><circle cx="12" cy="10" r="2.800" /><path d="M7.500 17a4.500 4.500 0 0 1 9 0" /></>,
+  trash: <><path d="M4.500 7h15" /><path d="M9.500 7V4.500h5V7" /><path d="M6.500 7l1 13h9l1-13" /><path d="M10.200 11v5.500M13.800 11v5.500" /></>,
   clock: <><circle cx="12" cy="12" r="8.500" /><path d="M12 7.500V12l3 2" /></>,
 };
 

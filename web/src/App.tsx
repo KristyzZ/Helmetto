@@ -197,7 +197,14 @@ export function App() {
         ) : route.tab === 'people' ? (
           <People workers={live.workers} devices={devices} onOpen={openWorker} onSaved={live.applyWorker} />
         ) : route.tab === 'home' ? (
-          <Overview devices={devices} alerts={live.alerts} serverNow={serverNow} onOpen={openDevice} onAdd={() => setAdding(true)} />
+          <Overview
+            devices={devices}
+            alerts={live.alerts}
+            serverNow={serverNow}
+            onOpen={openDevice}
+            onAdd={() => setAdding(true)}
+            onRemoved={live.removeDevice}
+          />
         ) : route.tab === 'map' && mapDevice ? (
           <>
             <div className="map-switch" role="tablist" aria-label="Equipment on the map">

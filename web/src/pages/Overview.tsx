@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import type { DeviceState, SafetyEvent } from '@helmetto/shared';
 import { Icon } from '../icons';
+import { RemoveEquipment } from '../RemoveEquipment';
 import { GEAR_ICON, activeEvent, attention, deviceStatus, fleetHero, gearTiles, kindOf, KIND_ICON, subtitle } from '../status';
 import { ago } from '../time';
 
@@ -37,9 +39,12 @@ export function Overview(props: {
   serverNow: number;
   onOpen: (deviceId: string) => void;
   onAdd: () => void;
+  onRemoved: (deviceId: string) => void;
 }) {
   const { devices, serverNow } = props;
   const summary = fleetHero(devices);
+  const [editing, setEditing] = useState(false);
+  const [removing, setRemoving] = useState<DeviceState | null>(null);
   const top = attention(devices)[0];
   const seen = top ? activeEvent(props.alerts[top.device.device_id] ?? [], top.alert)?.acknowledged_at : null;
 
@@ -65,14 +70,38 @@ export function Overview(props: {
         )}
       </button>
 
-      <h2 className="label">Equipment · {devices.length}</h2>
+      <div className="label-row">
+        <h2 className="label">Equipment · {devices.length}</h2>
+        <button className="text-button" onClick={() => setEditing((e) => !e)} aria-pressed={editing}>
+          {editing ? 'Done' : 'Edit'}
+        </button>
+      </div>
       <ul className="eq-list">
         {devices.map((device) => (
-          <li key={device.device_id}>
+          <li key={device.device_id} className={editing ? 'eq-edit' : undefined}>
             <EquipmentCard device={device} serverNow={serverNow} onOpen={() => props.onOpen(device.device_id)} />
+            {editing && (
+              <button
+                className={`remove-btn ${device.removable === false ? 'remove-btn--fixed' : ''}`}
+                onClick={() => setRemoving(device)}
+                aria-label={`Remove ${device.name}`}
+              >
+                <Icon name={device.removable === false ? 'lock' : 'trash'} size={20} />
+              </button>
+            )}
           </li>
         ))}
       </ul>
+      {removing && (
+        <RemoveEquipment
+          device={removing}
+          onClose={() => setRemoving(null)}
+          onRemoved={(id) => {
+            props.onRemoved(id);
+            if (devices.length <= 1) setEditing(false);
+          }}
+        />
+      )}
       <button className="button button--block button--dashed" onClick={props.onAdd}>
         <Icon name="plus" size={18} /> Add equipment
       </button>

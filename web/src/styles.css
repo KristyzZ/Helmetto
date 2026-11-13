@@ -471,3 +471,13 @@ a.button { text-decoration: none; }
 .tag-id code { background: none; font-size: var(--fs-xl); font-weight: 700; letter-spacing: 0.04em; color: var(--ink); user-select: all; }
 .tabbar { grid-template-columns: repeat(5, 1fr); }
 .tab { font-size: 0.68rem; }
+
+/* ---------- remove equipment ---------- */
+.label-row { display: flex; align-items: center; justify-content: space-between; }
+.label-row .label { margin-bottom: var(--s2); }
+.label-row .text-button { color: var(--ink); padding: 6px 2px; }
+.eq-edit { display: flex; align-items: stretch; gap: var(--s2); }
+.eq-edit .eq { flex: 1; min-width: 0; }
+.remove-btn { width: 52px; flex: none; border-radius: var(--r-md); display: grid; place-items: center; background: var(--alert-solid); color: #fff; animation: fade 0.15s ease-out; }
+.remove-btn--fixed { background: var(--surface-2); color: var(--text-3); }
+.text-button { display: inline-flex; align-items: center; gap: 6px; }
