@@ -549,3 +549,12 @@ The simulator (also `npm run simulate`) sends real telemetry to
 `POST /api/devices/:deviceId/telemetry` with the device key, and obeys `lock`
 in the response like lock hardware would, so mock data takes the same path as
 hardware.
+
+### Optional Wi-Fi location fallback
+
+Firmware can send up to 12 entries in wifi_access_points, each with
+macAddress (BSSID) and signalStrength (integer dBm). The server resolves
+them only when there is no valid coordinate pair and a provider key is
+configured. The public state reports location_source (gps, wifi or demo)
+and, for Wi-Fi estimates, location_accuracy_m. The last known location
+retains its source and accuracy. Wi-Fi estimates are for display.

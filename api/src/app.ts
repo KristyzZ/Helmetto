@@ -30,6 +30,8 @@ import {
   validationError,
   workerUpdateSchema,
 } from './validation';
+import { locateWifi } from './wifi-location';
+import { isValidCoordinate } from '@helmetto/ai';
 import { reportCsv } from './report';
 
 const SSE_KEEPALIVE_MS = 15_000;
@@ -60,7 +62,7 @@ export function createApp(deps: {
   });
 
   // ---- Hardware: telemetry ingest -------------------------------------------------
-  app.post(ROUTE_PATTERNS.telemetry, (req, res) => {
+  app.post(ROUTE_PATTERNS.telemetry, async (req, res) => {
     const deviceId = String(req.params.deviceId);
     const key = req.get(DEVICE_KEY_HEADER);
     if (!key) return fail(res, 401, 'missing_device_key', `Send the device API key in the ${DEVICE_KEY_HEADER} header`);
@@ -71,7 +73,12 @@ export function createApp(deps: {
     const parsed = telemetrySchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json(validationError(parsed.error));
 
-    const { lock } = service.ingestTelemetry(deviceId, parsed.data as Telemetry);
+    const { wifi_access_points, ...reading } = parsed.data;
+    const telemetry = reading as Telemetry;
+    if (wifi_access_points && !isValidCoordinate(reading.latitude, reading.longitude)) {
+      Object.assign(telemetry, await locateWifi(wifi_access_points));
+    }
+    const { lock } = service.ingestTelemetry(deviceId, telemetry);
     res.json({ ok: true, received_at: new Date().toISOString(), lock } satisfies TelemetryAccepted);
   });
 

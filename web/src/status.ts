@@ -327,7 +327,13 @@ export function location(d: DeviceState) {
 export function locationLabel(d: DeviceState, serverNow: number): string {
   const { position, live } = location(d);
   if (!position) return 'No location';
-  return live ? 'Live location' : `Last seen here ${ago(d.last_location?.at ?? null, serverNow)}`;
+  const source = live ? d.telemetry?.location_source : d.last_location?.source;
+  const accuracy = live ? d.telemetry?.location_accuracy_m : d.last_location?.accuracy_m;
+  const label = source === 'wifi' ? 'Wi-Fi estimate' + (accuracy ? ' (±' + Math.round(accuracy) + ' m)' : '')
+    : source === 'gps' ? 'GPS' : source === 'demo' ? 'Demo location' : null;
+  if (live) return label ?? 'Live location';
+  const age = ago(d.last_location?.at ?? null, serverNow);
+  return label ? label + ' · ' + age : 'Last seen here ' + age;
 }
 
 export function zoneLabel(d: DeviceState): { tone: Tone; text: string } {

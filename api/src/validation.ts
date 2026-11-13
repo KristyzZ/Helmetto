@@ -29,6 +29,11 @@ export const telemetrySchema = z.object({
   helmet_worn: nullable(z.boolean()),
   latitude: nullable(z.number().finite()),
   longitude: nullable(z.number().finite()),
+  location_source: z.enum(["gps", "demo"]).optional(),
+  wifi_access_points: z.array(z.object({
+    macAddress: z.string().regex(/^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/i),
+    signalStrength: z.number().int().min(-128).max(-10),
+  })).max(12).optional(),
   speed_kmh: nullable(z.number().finite().min(0).max(200)),
   battery_percent: nullable(z.number().finite().min(0).max(100)),
   crash_detected: nullable(z.boolean()),
