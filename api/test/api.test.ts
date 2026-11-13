@@ -10,6 +10,7 @@ const config: Config = {
   port: 0,
   databasePath: ':memory:',
   device: { id: 'test-scooter', apiKey: 'test-key', name: 'Test scooter', childName: null },
+  demoDevices: [],
   demoMode: false,
   offlineTimeoutMs: 30_000,
   webDist: '/nonexistent',
@@ -100,10 +101,10 @@ describe('telemetry auth and validation', () => {
 describe('alerts fire on transitions only', () => {
   it('one helmet alert for many identical readings, then one recovery', async () => {
     for (let i = 0; i < 4; i++) await post(reading({ helmet_connected: false }));
-    expect((await state()).active_alerts).toEqual(['helmet_disconnected']);
+    expect((await state()).active_alerts).toEqual(['unprotected_use']);
     await post(reading());
     await post(reading());
-    expect(await alertTypes()).toEqual(['helmet_disconnected', 'helmet_reconnected']);
+    expect(await alertTypes()).toEqual(['unprotected_use', 'protection_restored']);
     expect((await state()).active_alerts).toEqual([]);
   });
 
@@ -249,7 +250,7 @@ describe('device names', () => {
     await post(reading({ helmet_connected: false }));
     await post(reading());
     const { alerts } = (await (await fetch(`${base}/api/devices/test-scooter/alerts?limit=2`)).json()) as AlertsResponse;
-    expect(alerts[1]?.message).toBe("Emma's helmet is out of range or switched off.");
+    expect(alerts[1]?.message).toBe('Emma (Test scooter): in use without helmet.');
   });
 
   it('renames the scooter, clears the child name, rejects empty updates', async () => {
@@ -260,6 +261,83 @@ describe('device names', () => {
     expect((await patch({})).status).toBe(400);
     expect((await patch({ name: '' })).status).toBe(400);
     expect((await patch({ name: 'x'.repeat(41) })).status).toBe(400);
+  });
+});
+
+describe('equipment and gear', () => {
+  const patch = (body: unknown, device = 'test-scooter') =>
+    fetch(`${base}/api/devices/${device}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  /** All three tags on, with optional overrides per type. */
+  const gearOn = (over: Record<string, object> = {}) =>
+    [
+      { type: 'helmet', connected: true, worn: true },
+      { type: 'chaps', connected: true, worn: true },
+      { type: 'ear_protection', connected: true, worn: null },
+    ].map((g) => ({ ...g, ...over[g.type] }));
+
+  it('configures the device as a chainsaw with auto-lock', async () => {
+    const res = await patch({
+      kind: 'chainsaw',
+      operator_name: 'Mantas',
+      site: 'Forest plot 12',
+      required_gear: ['helmet', 'chaps', 'ear_protection'],
+      auto_lock: true,
+    });
+    expect(res.status).toBe(200);
+    const s = (await res.json()) as DeviceState;
+    expect(s).toMatchObject({ kind: 'chainsaw', operator_name: 'Mantas', child_name: 'Mantas', site: 'Forest plot 12', auto_lock: true });
+    expect(s.required_gear).toEqual(['helmet', 'chaps', 'ear_protection']);
+  });
+
+  it('rejects unknown kinds and gear types', async () => {
+    expect((await patch({ kind: 'tractor' })).status).toBe(400);
+    expect((await patch({ required_gear: ['cape'] })).status).toBe(400);
+    expect((await post(reading({ gear: [{ type: 'cape', connected: true }] }))).status).toBe(400);
+    expect((await post(reading({ gear: [{ type: 'chaps' }] }))).status).toBe(400);
+  });
+
+  it('per-item gear status; no alert while the saw is off', async () => {
+    const before = (await alertTypes()).length;
+    const res = await post(reading({ equipment_active: false, gear: gearOn({ chaps: { connected: false } }) }));
+    expect(((await res.json()) as { lock: boolean }).lock).toBe(true); // auto-lock: gear missing
+    const s = await state();
+    expect(s.in_use).toBe(false);
+    expect(s.lock_engaged).toBe(true);
+    expect(s.gear_status).toEqual([
+      { type: 'helmet', state: 'ok' },
+      { type: 'chaps', state: 'missing' },
+      { type: 'ear_protection', state: 'ok' },
+    ]);
+    expect((await alertTypes()).length - before).toBe(1); // locked for missing chaps counts as unprotected
+  });
+
+  it('running without chaps: one alert, lock stays on, recovery when chaps are back', async () => {
+    await post(reading({ equipment_active: true, gear: gearOn() }));
+    const before = (await alertTypes()).length;
+    const first = await post(reading({ equipment_active: true, gear: gearOn({ chaps: { connected: false } }) }));
+    expect(((await first.json()) as { lock: boolean }).lock).toBe(true);
+    await post(reading({ equipment_active: false, locked: true, gear: gearOn({ chaps: { connected: false } }) }));
+    await post(reading({ equipment_active: false, locked: true, gear: gearOn({ chaps: { connected: false } }) }));
+    expect((await state()).active_alerts).toEqual(['unprotected_use']);
+    const back = await post(reading({ equipment_active: false, locked: true, gear: gearOn() }));
+    expect(((await back.json()) as { lock: boolean }).lock).toBe(false);
+    const { alerts } = (await (await fetch(`${base}/api/devices/test-scooter/alerts?limit=5`)).json()) as AlertsResponse;
+    expect(alerts.slice(0, 2).map((a) => a.type)).toEqual(['protection_restored', 'unprotected_use']);
+    expect(alerts[1]?.message).toBe('Mantas (Blue scooter): running without chaps. Locked until it is back.');
+    expect(alerts[0]?.message).toBe('Mantas (Blue scooter): all required gear is back on.');
+    expect((await alertTypes()).length - before).toBe(2);
+  });
+
+  it('dropping a required item ends its alert right away', async () => {
+    await post(reading({ equipment_active: true, gear: gearOn({ ear_protection: { connected: false } }) }));
+    expect((await state()).active_alerts).toEqual(['unprotected_use']);
+    await patch({ required_gear: ['helmet', 'chaps'] });
+    expect((await state()).active_alerts).toEqual([]);
+    await patch({ kind: 'other', operator_name: null, site: null, required_gear: ['helmet'], auto_lock: false });
   });
 });
 

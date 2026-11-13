@@ -10,6 +10,7 @@ loadEnvFile();
 const config = loadConfig();
 const store = new Store(config.databasePath);
 store.seedDevice(config.device);
+for (const device of config.demoDevices) store.seedDevice(device);
 
 const service = new SafetyService(store, { offlineTimeoutMs: config.offlineTimeoutMs });
 const demo = new DemoRunner(config);

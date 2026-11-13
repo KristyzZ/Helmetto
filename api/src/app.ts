@@ -3,12 +3,15 @@ import path from 'node:path';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { z } from 'zod';
 import {
-  DEMO_SCENARIOS,
+  ALL_DEMO_SCENARIOS,
   DEVICE_KEY_HEADER,
   ROUTE_PATTERNS,
   type AlertsResponse,
   type ApiError,
+  type DemoScenario,
+  type DeviceUpdate,
   type DevicesResponse,
+  type Telemetry,
   type TelemetryAccepted,
 } from '@helmetto/shared';
 import type { Config } from './config';
@@ -23,7 +26,9 @@ const fail = (res: Response, status: number, error: string, message: string) =>
   res.status(status).json({ error, message } satisfies ApiError);
 
 const demoSchema = z.object({
-  scenario: z.enum(['stop', ...DEMO_SCENARIOS.map((s) => s.id)] as [string, ...string[]]),
+  scenario: z.enum(['stop', 'start-all', ...ALL_DEMO_SCENARIOS] as [string, ...string[]]),
+  /** Which simulated device; default = the hardware device. */
+  device_id: z.string().optional(),
 });
 
 export function createApp(deps: {
@@ -54,8 +59,8 @@ export function createApp(deps: {
     const parsed = telemetrySchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json(validationError(parsed.error));
 
-    service.ingestTelemetry(deviceId, parsed.data);
-    res.json({ ok: true, received_at: new Date().toISOString() } satisfies TelemetryAccepted);
+    const { lock } = service.ingestTelemetry(deviceId, parsed.data as Telemetry);
+    res.json({ ok: true, received_at: new Date().toISOString(), lock } satisfies TelemetryAccepted);
   });
 
   // ---- Parent app -----------------------------------------------------------------
@@ -72,7 +77,7 @@ export function createApp(deps: {
   app.patch(ROUTE_PATTERNS.device, (req, res) => {
     const parsed = deviceUpdateSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json(validationError(parsed.error));
-    const state = service.updateDevice(String(req.params.deviceId), parsed.data);
+    const state = service.updateDevice(String(req.params.deviceId), parsed.data as DeviceUpdate);
     if (!state) return fail(res, 404, 'unknown_device', 'No such device');
     res.json(state);
   });
@@ -134,8 +139,12 @@ export function createApp(deps: {
     if (!demo || !config.demoMode) return fail(res, 403, 'demo_disabled', 'Start the server with DEMO_MODE=true');
     const parsed = demoSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json(validationError(parsed.error));
-    const { scenario } = parsed.data;
-    res.json(scenario === 'stop' ? demo.stop() : demo.run(scenario as never));
+    const { scenario, device_id } = parsed.data;
+    if (scenario === 'stop') return res.json(demo.stop(device_id));
+    if (scenario === 'start-all') return res.json(demo.startAll());
+    const status = demo.run(scenario as DemoScenario, device_id);
+    if (!status) return fail(res, 404, 'unknown_device', 'The demo cannot simulate that device');
+    res.json(status);
   });
 
   app.use('/api', (_req, res) => fail(res, 404, 'not_found', 'No such API route'));
