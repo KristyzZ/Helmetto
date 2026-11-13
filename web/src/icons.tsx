@@ -35,6 +35,10 @@ const PATHS: Record<string, ReactNode> = {
   power: <><path d="M12 3.500v8" /><path d="M7 6.500a7 7 0 1 0 10 0" /></>,
   sliders: <><path d="M4 7h9M17 7h3M4 17h3M11 17h9" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" /></>,
   grid: <><rect x="4" y="4" width="7" height="7" rx="2" /><rect x="13" y="4" width="7" height="7" rx="2" /><rect x="4" y="13" width="7" height="7" rx="2" /><rect x="13" y="13" width="7" height="7" rx="2" /></>,
+  chart: <><path d="M4 20h16" /><path d="M7 16.500V11" /><path d="M12 16.500V6" /><path d="M17 16.500v-4" /></>,
+  plus: <><path d="M12 5v14" /><path d="M5 12h14" /></>,
+  copy: <><rect x="8.500" y="8.500" width="11" height="11" rx="2" /><path d="M15.500 8.500V6.500a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2" /></>,
+  download: <><path d="M12 4v11" /><path d="m7 10.500 5 5 5-5" /><path d="M5 20h14" /></>,
   clock: <><circle cx="12" cy="12" r="8.500" /><path d="M12 7.500V12l3 2" /></>,
 };
 

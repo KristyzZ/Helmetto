@@ -14,10 +14,17 @@ import { Icon } from './icons';
 import { Sheet } from './Sheet';
 import { GEAR_ICON, KIND_ICON, kindOf, operatorOf, requiredGear } from './status';
 
-/** Shown in settings; scooters stay supported by the API but aren't offered for new setups. */
-const KINDS = EQUIPMENT_KINDS.filter((k) => k !== 'scooter');
+/** Offered in the app. Scooters and boats stay valid in the API but are not offered for now. */
+export const OFFERED_KINDS: EquipmentKind[] = EQUIPMENT_KINDS.filter((k) => k !== 'scooter' && k !== 'boat');
+/** Life jackets belong to the boat use case, which is paused. */
+export const OFFERED_GEAR: GearType[] = GEAR_TYPES.filter((g) => g !== 'life_jacket');
 
-export function EquipmentSettings(props: { device: DeviceState; onClose: () => void; onSaved: (state: DeviceState) => void }) {
+export function EquipmentSettings(props: {
+  device: DeviceState;
+  onClose: () => void;
+  onSaved: (state: DeviceState) => void;
+  onRemoved: (deviceId: string) => void;
+}) {
   const { device } = props;
   const [name, setName] = useState(device.name);
   const [operator, setOperator] = useState(operatorOf(device) ?? '');
@@ -27,6 +34,10 @@ export function EquipmentSettings(props: { device: DeviceState; onClose: () => v
   const [autoLock, setAutoLock] = useState(!!device.auto_lock);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  // An existing boat/scooter keeps its kind and gear visible, even though they are not offered.
+  const kinds = OFFERED_KINDS.includes(kind) ? OFFERED_KINDS : [...OFFERED_KINDS, kind];
+  const gearChoices = gear.includes('life_jacket') ? GEAR_TYPES : OFFERED_GEAR;
 
   const pickKind = (next: EquipmentKind) => {
     setKind(next);
@@ -56,6 +67,19 @@ export function EquipmentSettings(props: { device: DeviceState; onClose: () => v
     }
   };
 
+  const remove = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.deleteDevice(device.device_id);
+      props.onRemoved(device.device_id);
+    } catch (e) {
+      setError((e as Error).message);
+      setBusy(false);
+      setConfirmRemove(false);
+    }
+  };
+
   return (
     <Sheet title="Equipment settings" icon="sliders" onClose={props.onClose}>
       <label className="field">
@@ -76,7 +100,7 @@ export function EquipmentSettings(props: { device: DeviceState; onClose: () => v
       <div className="field">
         <span>Type</span>
         <div className="pick">
-          {KINDS.map((k) => (
+          {kinds.map((k) => (
             <button key={k} className="pick__item" aria-pressed={kind === k} onClick={() => pickKind(k)}>
               <Icon name={KIND_ICON[k]} size={18} />
               {EQUIPMENT_INFO[k].label}
@@ -88,7 +112,7 @@ export function EquipmentSettings(props: { device: DeviceState; onClose: () => v
       <div className="field">
         <span>Required gear</span>
         <div className="pick">
-          {GEAR_TYPES.map((g) => (
+          {gearChoices.map((g) => (
             <button key={g} className="pick__item" aria-pressed={gear.includes(g)} onClick={() => toggleGear(g)}>
               <Icon name={GEAR_ICON[g]} size={18} />
               {GEAR_INFO[g].label}
@@ -112,6 +136,22 @@ export function EquipmentSettings(props: { device: DeviceState; onClose: () => v
           {busy ? 'Saving…' : 'Save'}
         </button>
       </div>
+
+      {!confirmRemove ? (
+        <button className="text-button text-button--danger" onClick={() => setConfirmRemove(true)}>
+          Remove equipment
+        </button>
+      ) : (
+        <div className="confirm">
+          <p>Remove {device.name} and its alert history? Its tag will no longer be accepted.</p>
+          <div className="sheet__actions">
+            <button className="button" onClick={() => setConfirmRemove(false)}>Cancel</button>
+            <button className="button button--danger-solid" disabled={busy} onClick={remove}>
+              Remove
+            </button>
+          </div>
+        </div>
+      )}
     </Sheet>
   );
 }

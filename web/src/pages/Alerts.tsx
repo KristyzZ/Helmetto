@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import type { AlertType, DeviceState, SafetyEvent } from '@helmetto/shared';
+import { AckButton } from '../AckButton';
 import { Icon } from '../icons';
 import { notifyPermission, requestNotifyPermission, type NotifyPermission } from '../notify';
 import { Sheet } from '../Sheet';
-import { ALERT_HELP, EVENT_ICON, alertLine, alertTone, attention, title } from '../status';
+import { ALERT_HELP, EVENT_ICON, activeEvent, alertLine, alertTone, attention, title } from '../status';
 import { clock, dayLabel, duration } from '../time';
 
 function Notifications() {
@@ -46,6 +47,7 @@ export function Alerts(props: {
   alerts: Record<string, SafetyEvent[]>;
   serverNow: number;
   onOpenDevice: (deviceId: string) => void;
+  onEvent: (event: SafetyEvent) => void;
 }) {
   const { devices, alerts, serverNow } = props;
   const [openEvent, setOpenEvent] = useState<SafetyEvent | null>(null);
@@ -86,6 +88,7 @@ export function Alerts(props: {
                       <strong>{device.name}</strong>
                       <small>{title(alert)} · {alertLine(alert, device)}</small>
                     </span>
+                    {activeEvent(alerts[device.device_id] ?? [], alert)?.acknowledged_at && <span className="tag tone-unknown">Seen</span>}
                     {start && <time>{duration(start, serverNow)}</time>}
                     <Icon name="chevron" size={16} />
                   </button>
@@ -128,6 +131,7 @@ export function Alerts(props: {
       {openAlert && (
         <Sheet title={`${openAlert.device.name}: ${title(openAlert.type)}`} icon={EVENT_ICON[openAlert.type]} tone={alertTone(openAlert.type)} onClose={() => setOpenAlert(null)}>
           <p>{ALERT_HELP[openAlert.type]}</p>
+          <AckButton event={activeEvent(alerts[openAlert.device.device_id] ?? [], openAlert.type)} serverNow={serverNow} onDone={props.onEvent} />
           <div className="sheet__actions">
             <button className="button button--primary" onClick={() => props.onOpenDevice(openAlert.device.device_id)}>Open equipment</button>
           </div>

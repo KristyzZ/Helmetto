@@ -1,6 +1,6 @@
-import type { DeviceState } from '@helmetto/shared';
+import type { DeviceState, SafetyEvent } from '@helmetto/shared';
 import { Icon } from '../icons';
-import { GEAR_ICON, deviceStatus, fleetHero, gearTiles, kindOf, KIND_ICON, subtitle } from '../status';
+import { GEAR_ICON, activeEvent, attention, deviceStatus, fleetHero, gearTiles, kindOf, KIND_ICON, subtitle } from '../status';
 import { ago } from '../time';
 
 function EquipmentCard({ device, serverNow, onOpen }: { device: DeviceState; serverNow: number; onOpen: () => void }) {
@@ -31,9 +31,17 @@ function EquipmentCard({ device, serverNow, onOpen }: { device: DeviceState; ser
   );
 }
 
-export function Overview(props: { devices: DeviceState[]; serverNow: number; onOpen: (deviceId: string) => void }) {
+export function Overview(props: {
+  devices: DeviceState[];
+  alerts: Record<string, SafetyEvent[]>;
+  serverNow: number;
+  onOpen: (deviceId: string) => void;
+  onAdd: () => void;
+}) {
   const { devices, serverNow } = props;
   const summary = fleetHero(devices);
+  const top = attention(devices)[0];
+  const seen = top ? activeEvent(props.alerts[top.device.device_id] ?? [], top.alert)?.acknowledged_at : null;
 
   return (
     <div className="page">
@@ -48,7 +56,10 @@ export function Overview(props: { devices: DeviceState[]; serverNow: number; onO
         <span className="hero__line">{summary.line}</span>
         {summary.deviceId && (
           <span className="hero__foot">
-            <span>{summary.more > 0 ? `+${summary.more} more need${summary.more === 1 ? 's' : ''} attention` : 'Tap to open'}</span>
+            <span>
+              {seen ? 'Acknowledged' : 'Not acknowledged'}
+              {summary.more > 0 ? ` · +${summary.more} more` : ''}
+            </span>
             <span className="hero__more">Open <Icon name="chevron" size={14} /></span>
           </span>
         )}
@@ -62,6 +73,9 @@ export function Overview(props: { devices: DeviceState[]; serverNow: number; onO
           </li>
         ))}
       </ul>
+      <button className="button button--block button--dashed" onClick={props.onAdd}>
+        <Icon name="plus" size={18} /> Add equipment
+      </button>
     </div>
   );
 }

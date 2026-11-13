@@ -8,6 +8,7 @@ import {
   type GearState,
   type GearStatus,
   type GearType,
+  type SafetyEvent,
   type SafetyEventType,
 } from '@helmetto/shared';
 import type { IconName } from './icons';
@@ -130,6 +131,7 @@ export function deviceStatus(d: DeviceState): Status {
   const top = visibleAlerts(d)[0];
   if (top === 'unprotected_use' && d.lock_engaged) return { tone: 'alert', label: 'Locked', icon: 'lock' };
   if (top) return { tone: 'alert', label: title(top), icon: EVENT_ICON[top] };
+  if (d.manual_lock) return { tone: 'warn', label: 'Locked', icon: 'lock' };
   if (d.in_use) return { tone: 'ok', label: info.inUse, icon: 'check' };
   return { tone: 'unknown', label: info.idle, icon: 'power' };
 }
@@ -169,6 +171,12 @@ export function hero(d: DeviceState, serverNow: number): Hero {
       line: top === 'unprotected_use' ? `${gearProblem(d)}${who ? ` · ${who}` : ''}` : alertLine(top, d),
       alert: top,
       help: ALERT_HELP[top],
+    };
+  }
+  if (d.manual_lock) {
+    return {
+      tone: 'warn', icon: 'lock', title: 'Locked remotely', line: 'Locked from the app', alert: null,
+      help: 'A manager locked this equipment from the app. It stays locked until someone unlocks it here.',
     };
   }
   if (d.in_use) {
@@ -237,7 +245,9 @@ export function chips(d: DeviceState, serverNow: number): Chip[] {
   );
 
   out.push(
-    !d.auto_lock
+    d.manual_lock
+      ? { key: 'lock', icon: 'lock', label: 'Lock', value: 'Locked', tone: 'warn', help: 'Locked from the app. Use Unlock on this page to release it.' }
+      : !d.auto_lock
       ? { key: 'lock', icon: 'unlock', label: 'Auto-lock', value: 'Off', tone: 'unknown', help: 'Auto-lock is off: Helmetto only alerts. Turn it on in settings if the equipment has lock hardware.' }
       : d.lock_engaged
         ? { key: 'lock', icon: 'lock', label: 'Auto-lock', value: 'Locked', tone: 'alert', help: 'Locked because required gear is missing. It unlocks as soon as the gear is back.' }
@@ -263,6 +273,26 @@ export function chips(d: DeviceState, serverNow: number): Chip[] {
         },
   );
   return out;
+}
+
+/** The event that started an active alert: its newest occurrence. */
+export function activeEvent(events: readonly SafetyEvent[], type: AlertType): SafetyEvent | null {
+  return events.find((e) => e.type === type) ?? null;
+}
+
+/** "45 s", "12 min", "3 h 20 min" */
+export function formatDuration(seconds: number): string {
+  const s = Math.round(seconds);
+  if (s < 60) return `${s} s`;
+  if (s < 3600) return `${Math.round(s / 60)} min`;
+  const h = Math.floor(s / 3600);
+  const m = Math.round((s % 3600) / 60);
+  return m ? `${h} h ${m} min` : `${h} h`;
+}
+
+export function complianceTone(value: number | null): Tone {
+  if (value === null) return 'unknown';
+  return value >= 0.95 ? 'ok' : value >= 0.8 ? 'warn' : 'alert';
 }
 
 /** Current GPS position, or the last known one. */

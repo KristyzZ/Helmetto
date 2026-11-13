@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { SafetyEvent } from '@helmetto/shared';
+import { AddEquipment } from './AddEquipment';
 import { DemoPanel } from './DemoPanel';
 import { Icon, type IconName } from './icons';
 import { useLive } from './live';
@@ -8,14 +9,16 @@ import { Alerts } from './pages/Alerts';
 import { DevicePage } from './pages/DevicePage';
 import { MapPage } from './pages/MapPage';
 import { Overview } from './pages/Overview';
-import { EVENT_ICON, KIND_ICON, alertTone, attention, deviceStatus, kindOf, location as whereIs, title } from './status';
+import { Report } from './pages/Report';
+import { EVENT_ICON, KIND_ICON, activeEvent, alertTone, attention, deviceStatus, kindOf, location as whereIs, title } from './status';
 import { useNow } from './time';
 
-type Tab = 'home' | 'map' | 'alerts';
+type Tab = 'home' | 'map' | 'alerts' | 'report';
 const TABS: { id: Tab; label: string; icon: IconName }[] = [
   { id: 'home', label: 'Equipment', icon: 'grid' },
   { id: 'map', label: 'Map', icon: 'map' },
   { id: 'alerts', label: 'Alerts', icon: 'bell' },
+  { id: 'report', label: 'Report', icon: 'chart' },
 ];
 const isTab = (value: string): value is Tab => TABS.some((t) => t.id === value);
 
@@ -38,6 +41,7 @@ export function App() {
   const [mapId, setMapId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ event: SafetyEvent; name: string } | null>(null);
   const [demoOpen, setDemoOpen] = useState(() => location.hash === '#demo');
+  const [adding, setAdding] = useState(false);
   const logoTaps = useRef<number[]>([]);
   const toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const view = useRef({ route, names: {} as Record<string, string> });
@@ -89,7 +93,14 @@ export function App() {
 
   const down = live.connection === 'down';
   const urgent = attention(devices);
-  const alertCount = urgent.filter((u) => u.alert !== 'scooter_offline').length;
+  // The badge counts alerts nobody has acknowledged yet.
+  const alertCount = urgent.filter(
+    (u) => u.alert !== 'scooter_offline' && !activeEvent(live.alerts[u.device.device_id] ?? [], u.alert)?.acknowledged_at,
+  ).length;
+  const removed = (deviceId: string) => {
+    live.removeDevice(deviceId);
+    navigate({ tab: 'home', deviceId: null });
+  };
   // One slim strip for problems the current screen doesn't already show.
   const strip =
     !down && route.tab === 'map' ? urgent[0]
@@ -149,9 +160,11 @@ export function App() {
             onOpenMap={() => { setMapId(device.device_id); navigate({ tab: 'map', deviceId: null }); }}
             onOpenAlerts={() => navigate({ tab: 'alerts', deviceId: null })}
             onSaved={live.applyState}
+            onEvent={live.applyEvent}
+            onRemoved={removed}
           />
         ) : route.tab === 'home' ? (
-          <Overview devices={devices} serverNow={serverNow} onOpen={openDevice} />
+          <Overview devices={devices} alerts={live.alerts} serverNow={serverNow} onOpen={openDevice} onAdd={() => setAdding(true)} />
         ) : route.tab === 'map' && mapDevice ? (
           <>
             <div className="map-switch" role="tablist" aria-label="Equipment on the map">
@@ -168,8 +181,10 @@ export function App() {
             </div>
             <MapPage key={mapDevice.device_id} device={mapDevice} serverNow={serverNow} onSaved={live.applyState} />
           </>
+        ) : route.tab === 'report' ? (
+          <Report events={Object.values(live.alerts).flat().sort((a, b) => b.id - a.id)} />
         ) : (
-          <Alerts devices={devices} alerts={live.alerts} serverNow={serverNow} onOpenDevice={openDevice} />
+          <Alerts devices={devices} alerts={live.alerts} serverNow={serverNow} onOpenDevice={openDevice} onEvent={live.applyEvent} />
         )}
       </main>
 
@@ -205,6 +220,16 @@ export function App() {
       </nav>
 
       {demoOpen && <DemoPanel devices={devices} onClose={() => setDemoOpen(false)} />}
+      {adding && (
+        <AddEquipment
+          onClose={() => setAdding(false)}
+          onCreated={live.applyState}
+          onOpen={(deviceId) => {
+            setAdding(false);
+            openDevice(deviceId);
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import type { AlertType, DeviceState, SafetyEvent } from '@helmetto/shared';
+import { AckButton } from '../AckButton';
+import { api } from '../api';
 import { EquipmentSettings } from '../EquipmentSettings';
 import { Icon } from '../icons';
 import { MapView } from '../MapView';
@@ -19,6 +21,7 @@ import {
   locationLabel,
   subtitle,
   title,
+  activeEvent,
   visibleAlerts,
   zoneLabel,
 } from '../status';
@@ -34,6 +37,8 @@ export function DevicePage(props: {
   onOpenMap: () => void;
   onOpenAlerts: () => void;
   onSaved: (state: DeviceState) => void;
+  onEvent: (event: SafetyEvent) => void;
+  onRemoved: (deviceId: string) => void;
 }) {
   const { device, events, serverNow } = props;
   const [detail, setDetail] = useState<Detail | null>(null);
@@ -51,6 +56,15 @@ export function DevicePage(props: {
   const openChip = detail?.kind === 'chip' ? chipList.find((c) => c.key === detail.key) : undefined;
   const openAlert = detail?.kind === 'alert' ? detail.type : detail?.kind === 'hero' ? summary.alert : null;
   const close = () => setDetail(null);
+  const [locking, setLocking] = useState(false);
+  const toggleLock = async () => {
+    setLocking(true);
+    try {
+      props.onSaved(await api.updateDevice(device.device_id, { manual_lock: !device.manual_lock }));
+    } finally {
+      setLocking(false);
+    }
+  };
 
   return (
     <div className="page">
@@ -137,6 +151,11 @@ export function DevicePage(props: {
         </button>
       )}
 
+      <button className={`button button--block ${device.manual_lock ? 'button--primary' : ''}`} disabled={locking} onClick={toggleLock}>
+        <Icon name={device.manual_lock ? 'unlock' : 'lock'} size={18} />
+        {device.manual_lock ? 'Unlock' : 'Lock now'}
+      </button>
+
       {latest && (
         <button className="row row--card" onClick={props.onOpenAlerts}>
           <i className={`dot tone-${latest.severity === 'alert' ? 'alert' : 'ok'}`} />
@@ -153,6 +172,7 @@ export function DevicePage(props: {
         <Sheet title={summary.alert === openAlert ? summary.title : title(openAlert)} icon={EVENT_ICON[openAlert]} tone={alertTone(openAlert)} onClose={close}>
           <p>{ALERT_HELP[openAlert]}</p>
           {since(openAlert) && <p className="meta">Since {clock(since(openAlert)!)} · {duration(since(openAlert), serverNow)}</p>}
+          <AckButton event={activeEvent(events, openAlert)} serverNow={serverNow} onDone={props.onEvent} />
           <div className="sheet__actions">
             {position && <button className="button" onClick={props.onOpenMap}>Show on map</button>}
             <button className="button button--primary" onClick={props.onOpenAlerts}>All alerts</button>
@@ -169,7 +189,9 @@ export function DevicePage(props: {
           <p>{openChip.help}</p>
         </Sheet>
       )}
-      {detail?.kind === 'settings' && <EquipmentSettings device={device} onClose={close} onSaved={props.onSaved} />}
+      {detail?.kind === 'settings' && (
+        <EquipmentSettings device={device} onClose={close} onSaved={props.onSaved} onRemoved={props.onRemoved} />
+      )}
     </div>
   );
 }
