@@ -11,7 +11,7 @@ uint8_t receiverMac[] = {
   0x68, 0xC6, 0x3A, 0xA0, 0x59, 0x45
 };
 
-uint8_t message = 1;
+constexpr int FSR_WORN_THRESHOLD = 50;
 bool espNowReady = false;
 
 void setup() {
@@ -56,9 +56,14 @@ void loop() {
     return;
   }
 
+  const int pressure = analogRead(A0);
+  const bool worn = pressure >= FSR_WORN_THRESHOLD;
+  uint8_t message[] = {1, static_cast<uint8_t>(worn)};
+  Serial.printf("FSR A0: %d | helmet_worn: %s\n", pressure, worn ? "true" : "false");
+
   uint8_t result = esp_now_send(
     receiverMac,
-    &message,
+    message,
     sizeof(message)
   );
 
