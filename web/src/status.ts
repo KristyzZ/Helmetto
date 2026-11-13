@@ -57,6 +57,8 @@ export const kindInfo = (d: DeviceState) => EQUIPMENT_INFO[kindOf(d)];
 /** Who is using it: the worker identified by their gear tags, else the usual operator. */
 export const operatorOf = (d: DeviceState) => (d.worker_name ?? d.operator_name ?? d.child_name)?.trim() || null;
 export const hasReported = (d: DeviceState) => d.last_seen_at !== null;
+/** In use: running, or flagged as used without protection. */
+export const inUse = (d: DeviceState) => d.online && (!!d.in_use || d.active_alerts.includes('unprotected_use'));
 export const requiredGear = (d: DeviceState): GearType[] => d.required_gear ?? [...kindInfo(d).defaultGear];
 export const gearStatuses = (d: DeviceState): GearStatus[] =>
   d.gear_status ?? requiredGear(d).map((type) => ({ type, state: 'unknown' as GearState }));
@@ -71,7 +73,7 @@ export function subtitle(d: DeviceState): string {
 /** The longer explanation, shown only in the details sheet. */
 export const ALERT_HELP: Record<AlertType, string> = {
   unprotected_use:
-    'The equipment is in use while required protective gear is missing or not worn. With auto-lock on, the equipment is told to stay locked until the gear is back.',
+    'The equipment is in use while required protective gear is missing or not worn. Ask the operator to stop and put the gear on.',
   crash_detected: 'The equipment reported a hard impact. Check on the operator now.',
   geofence_exit: 'The equipment is outside the work area set on the map.',
   scooter_offline:
@@ -114,7 +116,7 @@ export function gearSentence(d: DeviceState): string {
 export function alertLine(type: AlertType, d: DeviceState): string {
   switch (type) {
     case 'unprotected_use':
-      return gearProblem(d) + (d.lock_engaged ? ', locked' : '');
+      return gearProblem(d);
     case 'crash_detected':
       return `Check on ${operatorOf(d) ?? 'the operator'} now`;
     case 'geofence_exit':
@@ -140,9 +142,7 @@ export function deviceStatus(d: DeviceState): Status {
   if (!hasReported(d)) return { tone: 'unknown', label: 'Not connected', icon: 'clock' };
   if (!d.online) return { tone: 'warn', label: 'Offline', icon: 'signalOff' };
   const top = visibleAlerts(d)[0];
-  if (top === 'unprotected_use' && d.lock_engaged) return { tone: 'alert', label: 'Locked', icon: 'lock' };
   if (top) return { tone: 'alert', label: title(top), icon: EVENT_ICON[top] };
-  if (d.manual_lock) return { tone: 'warn', label: 'Locked', icon: 'lock' };
   if (d.in_use) return { tone: 'ok', label: info.inUse, icon: 'check' };
   return { tone: 'unknown', label: info.idle, icon: 'power' };
 }
@@ -174,22 +174,13 @@ export function hero(d: DeviceState, serverNow: number): Hero {
     };
   }
   if (top) {
-    const lockedTitle = top === 'unprotected_use' && d.lock_engaged;
     return {
       tone: 'alert',
-      icon: lockedTitle ? 'lock' : EVENT_ICON[top],
-      title: lockedTitle ? 'Locked' : title(top),
-      line: top === 'unprotected_use'
-        ? `${gearSentence(d)}${lockedTitle ? ' It unlocks when the gear is back on.' : ''}`
-        : alertLine(top, d),
+      icon: EVENT_ICON[top],
+      title: title(top),
+      line: top === 'unprotected_use' ? gearSentence(d) : alertLine(top, d),
       alert: top,
       help: ALERT_HELP[top],
-    };
-  }
-  if (d.manual_lock) {
-    return {
-      tone: 'warn', icon: 'lock', title: 'Locked remotely', line: 'Locked from the app', alert: null,
-      help: 'A manager locked this equipment from the app. It stays locked until someone unlocks it here.',
     };
   }
   if (d.in_use) {
@@ -214,7 +205,7 @@ export function hero(d: DeviceState, serverNow: number): Hero {
 /** One tile per required gear item. */
 export function gearTiles(d: DeviceState): { type: GearType; label: string; value: string; tone: Tone }[] {
   const live = d.online;
-  const active = d.in_use || d.lock_engaged;
+  const active = inUse(d);
   return gearStatuses(d).map(({ type, state }) => {
     const label = GEAR_INFO[type].label;
     if (!live) return { type, label, value: 'Unknown', tone: 'unknown' };
@@ -252,19 +243,9 @@ export function chips(d: DeviceState, serverNow: number): Chip[] {
       ? { key: 'state', icon: 'power', label: 'State', value: '—', tone: 'unknown', help: 'No data yet.' }
       : !live
         ? { key: 'state', icon: 'signalOff', label: 'State', value: 'Offline', tone: 'warn', help: `No data for ${duration(d.last_seen_at, serverNow)}.` }
-        : d.in_use
+        : inUse(d)
           ? { key: 'state', icon: 'power', label: 'State', value: info.inUse, tone: 'ok', help: `${info.label} is in use. Updated ${ago(d.last_seen_at, serverNow)}.` }
           : { key: 'state', icon: 'power', label: 'State', value: info.idle, tone: 'unknown', help: `${info.label} is not in use.` },
-  );
-
-  out.push(
-    d.manual_lock
-      ? { key: 'lock', icon: 'lock', label: 'Lock', value: 'Locked', tone: 'warn', help: 'Locked from the app. Use Unlock on this page to release it.' }
-      : !d.auto_lock
-      ? { key: 'lock', icon: 'unlock', label: 'Auto-lock', value: 'Off', tone: 'unknown', help: 'Auto-lock is off: Helmetto only alerts. Turn it on in settings if the equipment has lock hardware.' }
-      : d.lock_engaged
-        ? { key: 'lock', icon: 'lock', label: 'Auto-lock', value: 'Locked', tone: 'alert', help: 'Locked because required gear is missing. It unlocks as soon as the gear is back.' }
-        : { key: 'lock', icon: 'lock', label: 'Auto-lock', value: 'Ready', tone: 'ok', help: 'Auto-lock is on. The equipment locks if required gear goes missing.' },
   );
 
   if (t?.speed_kmh != null || kindOf(d) === 'boat' || kindOf(d) === 'scooter') {
@@ -376,12 +357,11 @@ export function fleetHero(devices: DeviceState[]): FleetHero {
   const first = urgent[0];
   if (first) {
     const { device, alert } = first;
-    const locked = alert === 'unprotected_use' && device.lock_engaged;
     const who = operatorOf(device);
     return {
       tone: alertTone(alert),
-      icon: locked ? 'lock' : EVENT_ICON[alert],
-      title: locked ? `${device.name} locked` : `${device.name}: ${title(alert).toLowerCase()}`,
+      icon: EVENT_ICON[alert],
+      title: `${device.name}: ${title(alert).toLowerCase()}`,
       line: alert === 'unprotected_use' ? gearSentence(device) : `${who ? `${who}. ` : ''}${alertLine(alert, device)}.`,
       deviceId: device.device_id,
       more: urgent.length - 1,
@@ -391,11 +371,11 @@ export function fleetHero(devices: DeviceState[]): FleetHero {
   if (reported.length === 0) {
     return { tone: 'unknown', icon: 'clock', title: 'Waiting for equipment', line: 'No data yet', deviceId: null, more: 0 };
   }
-  const inUse = reported.filter((d) => d.in_use).length;
-  const idle = reported.length - inUse;
+  const running = reported.filter(inUse).length;
+  const idle = reported.length - running;
   const line =
-    inUse === 0
+    running === 0
       ? 'Nothing is running right now.'
-      : `${inUse === 1 ? '1 tool is' : `${inUse} tools are`} running and everyone has their gear on.${idle ? ` ${idle} switched off.` : ''}`;
+      : `${running === 1 ? '1 tool is' : `${running} tools are`} running and everyone has their gear on.${idle ? ` ${idle} switched off.` : ''}`;
   return { tone: 'ok', icon: 'check', title: 'All protected', line, deviceId: null, more: 0 };
 }

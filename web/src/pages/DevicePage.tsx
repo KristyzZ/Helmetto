@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import type { AlertType, DeviceState, SafetyEvent } from '@helmetto/shared';
 import { AckButton } from '../AckButton';
-import { api } from '../api';
 import { EquipmentSettings } from '../EquipmentSettings';
 import { GearBoard } from '../GearBoard';
 import { StatusHead } from '../StatusHead';
@@ -56,15 +55,6 @@ export function DevicePage(props: {
   const openChip = detail?.kind === 'chip' ? chipList.find((c) => c.key === detail.key) : undefined;
   const openAlert = detail?.kind === 'alert' ? detail.type : detail?.kind === 'hero' ? summary.alert : null;
   const close = () => setDetail(null);
-  const [locking, setLocking] = useState(false);
-  const toggleLock = async () => {
-    setLocking(true);
-    try {
-      props.onSaved(await api.updateDevice(device.device_id, { manual_lock: !device.manual_lock }));
-    } finally {
-      setLocking(false);
-    }
-  };
 
   return (
     <div className="page page--device">
@@ -154,11 +144,6 @@ export function DevicePage(props: {
           </span>
         </button>
       )}
-
-      <button className={`button button--block ${device.manual_lock ? 'button--primary' : ''}`} disabled={locking} onClick={toggleLock}>
-        <Icon name={device.manual_lock ? 'unlock' : 'lock'} size={18} />
-        {device.manual_lock ? 'Unlock' : 'Lock now'}
-      </button>
 
       {latest && (
         <button className="row row--card" onClick={props.onOpenAlerts}>

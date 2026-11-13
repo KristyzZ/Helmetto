@@ -31,7 +31,6 @@ export function EquipmentSettings(props: {
   const [site, setSite] = useState(device.site ?? '');
   const [kind, setKind] = useState<EquipmentKind>(kindOf(device));
   const [gear, setGear] = useState<GearType[]>(requiredGear(device));
-  const [autoLock, setAutoLock] = useState(!!device.auto_lock);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState(false);
@@ -57,7 +56,6 @@ export function EquipmentSettings(props: {
           site: site.trim() || null,
           kind,
           required_gear: gear,
-          auto_lock: autoLock,
         }),
       );
       props.onClose();
@@ -120,14 +118,6 @@ export function EquipmentSettings(props: {
           ))}
         </div>
       </div>
-
-      <label className="switch">
-        <span>
-          <strong>Auto-lock</strong>
-          <small>Lock the equipment while required gear is missing. Needs lock hardware.</small>
-        </span>
-        <input type="checkbox" role="switch" checked={autoLock} onChange={(e) => setAutoLock(e.target.checked)} />
-      </label>
 
       <p className="meta">Device ID {device.device_id}</p>
       {error && <p className="error">{error}</p>}

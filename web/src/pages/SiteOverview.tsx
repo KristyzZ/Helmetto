@@ -12,6 +12,7 @@ import {
   attention,
   complianceTone,
   fleetHero,
+  inUse,
   title,
   workerStatus,
 } from '../status';
@@ -59,7 +60,7 @@ export function SiteOverview(props: {
   const top = urgent[0];
   const seen = top ? activeEvent(alerts[top.device.device_id] ?? [], top.alert)?.acknowledged_at : null;
 
-  const running = devices.filter((d) => d.online && d.in_use).length;
+  const running = devices.filter(inUse).length;
   const people = workers.map((w) => ({ worker: w, status: workerStatus(stationOf(w.worker_id, devices)) }));
   const atStation = people.filter((p) => p.status.station).length;
   const names = Object.fromEntries(devices.map((d) => [d.device_id, d.name]));

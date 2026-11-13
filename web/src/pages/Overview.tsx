@@ -15,7 +15,6 @@ export function EquipmentBoard({ device, serverNow, onOpen }: { device: DeviceSt
         <span className="board__kind"><Icon name={KIND_ICON[kindOf(device)]} size={22} /></span>
         <span className="board__name">{device.name}</span>
         <span className={`tag tone-${status.tone}`}>
-          {status.icon === 'lock' && <Icon name="lock" size={12} />}
           {status.label}
         </span>
       </span>
