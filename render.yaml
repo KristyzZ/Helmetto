@@ -15,10 +15,14 @@ services:
         value: production
       - key: DEVICE_ID
         value: scooter-001
+      - key: DEVICE_KIND
+        value: power_tool
       - key: DEVICE_NAME
-        value: Demo scooter
-      - key: DEVICE_CHILD_NAME
-        value: Emma
+        value: Angle grinder
+      - key: DEVICE_OPERATOR
+        value: Tomas
+      - key: DEVICE_SITE
+        value: Workshop
       - key: DEVICE_API_KEY
         generateValue: true # Render creates a random key; copy it from the Environment tab into the firmware
       - key: DEMO_MODE
