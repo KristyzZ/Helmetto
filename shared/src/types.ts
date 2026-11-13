@@ -44,6 +44,11 @@ export interface Telemetry {
   gear?: GearReading[] | null;
   /** The equipment is currently locked out (can't be started). null = no lock hardware. */
   locked?: boolean | null;
+  /**
+   * Worker ID carried by the gear tags the equipment hears (the person at the
+   * station), e.g. "TAG-0002". null/missing = nobody identified.
+   */
+  worker_tag?: string | null;
 }
 
 /** A map point. Used for the corners of a drawn safe zone. */
@@ -115,6 +120,38 @@ export interface SafetyEvent {
   /** When a manager marked it as seen; null/missing = not yet. */
   acknowledged_at?: string | null;
   acknowledged_by?: string | null;
+  /** The worker at the equipment when it happened; null = unknown. */
+  worker_id?: string | null;
+}
+
+/** A person whose gear carries a worker tag. */
+export interface Worker {
+  worker_id: string;
+  name: string;
+  /** e.g. "Arborist"; null = not set. */
+  role: string | null;
+  /** The ID their gear tags send, e.g. "TAG-0002". Unique. */
+  tag_id: string;
+  created_at: string;
+}
+
+/** GET /api/workers. Where each worker is follows from DeviceState.worker_id. */
+export interface WorkersResponse {
+  workers: Worker[];
+}
+
+/** Body of POST /api/workers. tag_id is generated when left out. */
+export interface CreateWorkerRequest {
+  name: string;
+  role?: string | null;
+  tag_id?: string;
+}
+
+/** Body of PATCH /api/workers/:workerId. */
+export interface WorkerUpdate {
+  name?: string;
+  role?: string | null;
+  tag_id?: string;
 }
 
 export type ZoneStatus = 'inside' | 'outside' | 'unknown';
@@ -158,6 +195,10 @@ export interface DeviceState {
   lock_engaged?: boolean;
   /** A manager locked it from the app; stays locked until unlocked there. */
   manual_lock?: boolean;
+  /** The worker identified at the equipment right now (from worker_tag); null = nobody / unknown. */
+  worker_id?: string | null;
+  /** That worker's name, for convenience. */
+  worker_name?: string | null;
   /**
    * Scooter sent telemetry within the last 30 s.
    * false + helmet data present means "scooter offline", NOT "helmet disconnected":
@@ -248,6 +289,14 @@ export interface ReportResponse {
   devices: DeviceReport[];
   /** One entry per day, oldest first. */
   days: ({ day: string } & ReportStats)[];
+  /** Per worker, for time the equipment identified them. */
+  workers?: WorkerReport[];
+}
+
+export interface WorkerReport extends ReportStats {
+  worker_id: string;
+  name: string;
+  tag_id: string;
 }
 
 export interface DevicesResponse {
@@ -282,7 +331,9 @@ export type DemoScenario =
   | 'offline'
   | 'gear-removed'
   | 'gear-back'
-  | 'idle';
+  | 'idle'
+  /** Another worker takes over the equipment. */
+  | 'switch-worker';
 
 export interface DemoStatus {
   /** false = server started without DEMO_MODE; POST is rejected. */
@@ -308,4 +359,8 @@ export interface StreamEvents {
   alert_update: SafetyEvent;
   /** A device was removed. */
   device_removed: { device_id: string };
+  /** A worker was added or changed. */
+  worker: Worker;
+  /** A worker was removed. */
+  worker_removed: { worker_id: string };
 }

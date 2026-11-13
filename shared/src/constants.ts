@@ -23,6 +23,8 @@ export const GEOFENCE_MAX_POINTS = 50;
 /** Smallest drawn zone the server accepts (about 20 m x 20 m). */
 export const GEOFENCE_MIN_AREA_M2 = 400;
 export const NAME_MAX_LENGTH = 40;
+/** Worker tag IDs: letters, digits, - and _. Stored upper-case. */
+export const WORKER_TAG_PATTERN = /^[A-Z0-9_-]{1,32}$/;
 
 export const ALERT_TYPES: readonly AlertType[] = [
   'crash_detected',
@@ -88,6 +90,7 @@ export const DEMO_SCENARIOS: readonly { id: DemoScenario; label: string; descrip
   { id: 'gear-removed', label: 'Gear taken off', description: 'A required piece of gear goes missing while in use' },
   { id: 'gear-back', label: 'Gear back on', description: 'All required gear is back' },
   { id: 'idle', label: 'Switched off', description: 'Equipment off, gear put away: no alert' },
+  { id: 'switch-worker', label: 'Other worker', description: 'Another worker takes over the equipment' },
   { id: 'crash', label: 'Impact', description: 'Accelerometer reports a hard impact' },
   { id: 'geofence-exit', label: 'Leaves work area', description: 'Moves straight out of the work area' },
   { id: 'offline', label: 'Goes offline', description: 'Telemetry stops; offline after 30 s' },
@@ -95,6 +98,6 @@ export const DEMO_SCENARIOS: readonly { id: DemoScenario; label: string; descrip
 
 /** Every scenario id the API accepts, including the original scooter ones. */
 export const ALL_DEMO_SCENARIOS: readonly DemoScenario[] = [
-  'normal', 'gear-removed', 'gear-back', 'idle', 'crash', 'geofence-exit', 'offline',
+  'normal', 'gear-removed', 'gear-back', 'idle', 'switch-worker', 'crash', 'geofence-exit', 'offline',
   'helmet-disconnect', 'helmet-reconnect', 'helmet-not-worn',
 ];
