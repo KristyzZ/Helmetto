@@ -27,7 +27,7 @@ Requirements: Node 22.13+ (uses the built-in `node:sqlite`), HTTPS.
 | `DEVICE_AUTO_LOCK` | no | `true` to answer `lock: true` while gear is missing. |
 
 The kind, names, gear and auto-lock are only applied when the device is first created; after that they are edited in the app.
-| `DEMO_MODE` | no | `true` enables the in-app Demo panel and adds a simulated chainsaw and boat. Off by default in production. |
+| `DEMO_MODE` | no | `true` enables the in-app Demo panel and adds a simulated chainsaw. Off by default in production. |
 | `DATABASE_PATH` | no | Default `./data/helmetto.db`. Point at a mounted disk to keep history across deploys. |
 | `PORT` | no | Set by the host. |
 

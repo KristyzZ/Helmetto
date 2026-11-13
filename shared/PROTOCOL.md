@@ -46,7 +46,7 @@ Send one reading about every **5 seconds** while the scooter is on.
 | `speed_kmh` | number \| null | 0–200. |
 | `battery_percent` | number \| null | 0–100. |
 | `crash_detected` | boolean \| null | `true` while the accelerometer reports a hard impact. `null` if there is no accelerometer. |
-| `equipment_active` | boolean \| null, optional | `true` while the equipment is in use: tool switched on, saw running, boat under way. `null`/missing = can't tell; the server then assumes a reporting device is in use. |
+| `equipment_active` | boolean \| null, optional | `true` while the equipment is in use: tool switched on, saw running. `null`/missing = can't tell; the server then assumes a reporting device is in use. |
 | `gear` | array \| null, optional | One entry per paired gear tag: `{"type": "...", "connected": true, "worn": null}`. See below. When present it is used instead of `helmet_connected` / `helmet_worn`. |
 | `locked` | boolean \| null, optional | `true` while the equipment is locked out. `null` = no lock hardware. |
 
@@ -289,7 +289,8 @@ All equipment of the account.
 - `operator_name`: who uses it, or `null`. `child_name` carries the same value for older clients.
 - `required_gear`: gear that must be present while in use. `gear_status[].state`: `ok` | `missing` | `not_worn` | `unknown` (no tag for it, or offline).
 - `in_use`: from `equipment_active` (unknown counts as in use); `null` while offline or never reported.
-- `lock_engaged`: the server is currently answering `lock: true` to this device.
+- `lock_engaged`: the server is currently answering `lock: true` to this device (auto-lock for missing gear, or `manual_lock`).
+- `manual_lock`: a manager locked it from the app.
 - `geofence` is `null` when no zone is set; see `PUT .../geofence` below for its two shapes.
 - `online: false` with `last_seen_at: null` → the scooter has never reported.
 - `online: false` otherwise → **scooter offline**; `telemetry` is the *last known*
@@ -400,12 +401,67 @@ latest reading.
 | `kind` | `power_tool` \| `chainsaw` \| `boat` \| `scooter` \| `other` |
 | `required_gear` | array of gear types |
 | `auto_lock` | boolean |
+| `manual_lock` | boolean: lock / unlock from the app, whatever the gear does. Not an alert. |
 
 ```bash
 curl -X PATCH "http://localhost:3000/api/devices/scooter-001" \
   -H "Content-Type: application/json" \
   -d '{"kind":"power_tool","operator_name":"Tomas","site":"Workshop","required_gear":["eye_protection","ear_protection","gloves"],"auto_lock":false}'
 ```
+
+### `POST /api/devices`
+
+Register new equipment. Returns `201` with the new `DeviceState` and its API
+key. **The key is only returned here**; only its hash is stored.
+
+```bash
+curl -X POST "http://localhost:3000/api/devices" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Angle grinder 2","kind":"power_tool","operator_name":"Jonas","site":"Workshop B"}'
+```
+
+```json
+{ "device": { "device_id": "angle-grinder-2-3f9a", "...": "DeviceState" }, "api_key": "48 hex characters" }
+```
+
+`required_gear` defaults to the usual set for `kind`; `auto_lock` defaults to `false`.
+
+### `DELETE /api/devices/:deviceId`
+
+Remove equipment with its history and report data. `204` on success. The
+device configured on the server (`DEVICE_ID`) can't be removed (`409`): it
+would come back on the next restart.
+
+### `POST /api/alerts/:eventId/acknowledge`
+
+Mark an alert as seen. Body (optional): `{"by":"Kipras"}`. Returns the updated
+`SafetyEvent` with `acknowledged_at` / `acknowledged_by`. Acknowledging twice
+keeps the first. Recoveries can't be acknowledged (`404`). It does not clear
+the alert: that only happens when the problem ends.
+
+### `GET /api/report?days=7`
+
+Protection statistics for the last 1–90 UTC days, today included.
+
+```json
+{
+  "from": "2026-11-07",
+  "to": "2026-11-13",
+  "totals": { "in_use_s": 7200, "unprotected_s": 360, "incidents": 3, "compliance": 0.95, "missed": { "chaps": 2, "gloves": 1 } },
+  "devices": [{ "device_id": "demo-chainsaw", "name": "Chainsaw", "kind": "chainsaw", "operator_name": "Mantas", "in_use_s": 3600, "unprotected_s": 300, "incidents": 2, "compliance": 0.917, "missed": { "chaps": 2 } }],
+  "days": [{ "day": "2026-11-07", "in_use_s": 0, "unprotected_s": 0, "incidents": 0, "compliance": null, "missed": {} }]
+}
+```
+
+- `in_use_s`: seconds the equipment was in use. Each reading's state counts
+  until the next reading, up to 15 s (longer gaps count as 15 s).
+- `unprotected_s`: in-use seconds while required gear was missing.
+- `compliance`: `1 - unprotected_s / in_use_s`, or `null` if not used.
+- `incidents`: "No protection" alerts that started; `missed`: which gear was
+  missing when they started.
+
+`GET /api/report.csv?days=7` returns the same as a CSV file (one row per
+equipment plus a total), for Excel / Google Sheets.
 
 ### `GET /api/stream` (Server-Sent Events)
 
@@ -416,6 +472,8 @@ Live updates. Named events, each `data:` line is JSON:
 | `hello` | `{ "devices": DeviceState[] }` | Once, on connect |
 | `state` | `DeviceState` | Every telemetry, offline timeout, geofence change |
 | `alert` | `SafetyEvent` (same shape as in `/alerts`) | A new alert or recovery was logged |
+| `alert_update` | `SafetyEvent` | An existing alert changed (acknowledged) |
+| `device_removed` | `{ "device_id": "..." }` | Equipment was removed |
 
 A `: keepalive` comment is sent every 15 s. Clients that can't use SSE can poll
 `GET /api/devices` instead.
@@ -434,9 +492,10 @@ curl -N http://localhost:3000/api/stream
 
 Only when the server runs with `DEMO_MODE=true` (default in local dev). Demo
 mode also adds two simulated devices next to the hardware one:
-`demo-chainsaw` (forest, auto-lock on) and `demo-boat` (lake).
+`demo-chainsaw` (forest, auto-lock on). Simulated devices no longer in the
+demo (the earlier `demo-boat`) are removed on start.
 
-- `GET /api/demo` → `{ "enabled": true, "running": false, "scenario": null, "device_id": "scooter-001", "runs": [], "devices": ["scooter-001", "demo-chainsaw", "demo-boat"] }`
+- `GET /api/demo` → `{ "enabled": true, "running": false, "scenario": null, "device_id": "scooter-001", "runs": [], "devices": ["scooter-001", "demo-chainsaw"] }`
 - `POST /api/demo` with `{"scenario":"<name>","device_id":"demo-chainsaw"}` starts
   or switches that device's simulator (`device_id` defaults to the hardware device).
 - `{"scenario":"start-all"}` starts every device in normal use; `{"scenario":"stop"}`
