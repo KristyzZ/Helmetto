@@ -301,6 +301,7 @@ All equipment of the account.
 - `in_use`: from `equipment_active` (unknown counts as in use); `null` while offline or never reported.
 - `lock_engaged`: the server is currently answering `lock: true` to this device (auto-lock for missing gear, or `manual_lock`).
 - `manual_lock`: a manager locked it from the app.
+- `removable`: `false` for the device configured on the server (`DEVICE_ID`), which `DELETE` refuses.
 - `worker_id` / `worker_name`: the person identified by `worker_tag` in the latest reading; `null` = nobody, unknown tag, or offline.
 - `geofence` is `null` when no zone is set; see `PUT .../geofence` below for its two shapes.
 - `online: false` with `last_seen_at: null` → the scooter has never reported.
@@ -440,8 +441,9 @@ curl -X POST "http://localhost:3000/api/devices" \
 ### `DELETE /api/devices/:deviceId`
 
 Remove equipment with its history and report data. `204` on success. The
-device configured on the server (`DEVICE_ID`) can't be removed (`409`): it
-would come back on the next restart.
+device configured on the server (`DEVICE_ID`, `removable: false`) can't be
+removed (`409 configured_device`): it would come back on the next restart.
+Removing a device the demo is simulating also stops that simulator.
 
 ### Workers
 

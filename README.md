@@ -97,7 +97,9 @@ More in [`docs/screenshots/`](docs/screenshots), in light and dark mode.
   equipment (or "All protected"), then a card per piece of equipment with its
   state and a dot per required gear item. Tap a card for its page.
   **Add equipment** registers a new tool and shows its device ID and API key
-  once, ready to paste into the firmware.
+  once, ready to paste into the firmware. **Edit** shows a delete button on
+  each card (with a confirmation); the device configured on the server
+  (`DEVICE_ID`) can't be deleted because it would come back on restart.
 - **Equipment page**: the state, one tile per required gear item, lock,
   battery, map. **Lock now / Unlock** locks the tool from the app (needs lock
   hardware). The sliders icon opens settings: name, who uses it, site, type,
