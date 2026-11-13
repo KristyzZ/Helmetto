@@ -112,7 +112,7 @@ export function Report({ events }: { events: SafetyEvent[] }) {
                       <strong>{d.name}</strong>
                       <small>
                         {d.in_use_s > 0 ? `${formatDuration(d.in_use_s)} in use` : 'Not used'}
-                        {d.incidents > 0 && ` · ${d.incidents} incident${d.incidents > 1 ? 's' : ''}`}
+                        {d.incidents > 0 && `, ${d.incidents} incident${d.incidents > 1 ? 's' : ''}`}
                       </small>
                       <span className="meter"><span className={`meter__fill tone-${dTone}`} style={{ width: `${(d.compliance ?? 0) * 100}%` }} /></span>
                     </span>
@@ -136,7 +136,7 @@ export function Report({ events }: { events: SafetyEvent[] }) {
                         <strong>{w.name}</strong>
                         <small>
                           {w.in_use_s > 0 ? `${formatDuration(w.in_use_s)} working` : 'No work recorded'}
-                          {w.incidents > 0 && ` · ${w.incidents} incident${w.incidents > 1 ? 's' : ''}`}
+                          {w.incidents > 0 && `, ${w.incidents} incident${w.incidents > 1 ? 's' : ''}`}
                         </small>
                         <span className="meter"><span className={`meter__fill tone-${wTone}`} style={{ width: `${(w.compliance ?? 0) * 100}%` }} /></span>
                       </span>

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { initials, stationOf } from '@helmetto/ai';
 import { NAME_MAX_LENGTH, type DeviceState, type ReportResponse, type SafetyEvent, type Worker } from '@helmetto/shared';
 import { api } from '../api';
+import { StatusHead } from '../StatusHead';
 import { Icon } from '../icons';
 import { MapView } from '../MapView';
 import { Sheet } from '../Sheet';
@@ -16,6 +17,7 @@ import {
   location,
   title,
   workerStatus,
+  type Tone,
 } from '../status';
 import { ago } from '../time';
 
@@ -163,10 +165,10 @@ export function People(props: {
                     <strong>{worker.name}</strong>
                     <span className={`tag tone-${status.tone}`}>{status.tone === 'ok' ? 'Protected' : status.tone === 'alert' ? 'Not protected' : status.station ? 'Idle' : 'Away'}</span>
                   </span>
-                  <span className="eq__sub">{[worker.role, worker.tag_id].filter(Boolean).join(' · ')}</span>
+                  <span className="eq__sub">{[worker.role, worker.tag_id].filter(Boolean).join(', ')}</span>
                   <span className="where">
                     {status.station ? (
-                      <><Icon name={KIND_ICON[kindOf(status.station)]} size={16} />{status.station.name}{status.station.site ? ` · ${status.station.site}` : ''}</>
+                      <><Icon name={KIND_ICON[kindOf(status.station)]} size={16} />{status.station.name}{status.station.site ? `, ${status.station.site}` : ''}</>
                     ) : (
                       <><Icon name="signalOff" size={16} />Not at a station</>
                     )}
@@ -225,7 +227,7 @@ export function WorkerPage(props: {
     !station
       ? { tone: 'unknown', icon: 'signalOff' as const, title: 'Not at a station', line: 'No equipment hears their gear tags right now' }
       : status.tone === 'alert'
-        ? { tone: 'alert', icon: 'shield' as const, title: 'Not protected', line: `${status.label} · ${station.name}` }
+        ? { tone: 'alert', icon: 'shield' as const, title: 'Not protected', line: `${status.label} at the ${station.name.toLowerCase()}` }
         : status.tone === 'ok'
           ? { tone: 'ok', icon: 'check' as const, title: 'Protected', line: `Working at ${station.name}` }
           : { tone: 'unknown', icon: 'power' as const, title: 'At a station', line: `${station.name} is not in use` };
@@ -239,18 +241,14 @@ export function WorkerPage(props: {
         <Avatar name={worker.name} tone={status.tone} />
         <span className="page-head__text">
           <strong>{worker.name}</strong>
-          <small>{[worker.role, worker.tag_id].filter(Boolean).join(' · ')}</small>
+          <small>{[worker.role, worker.tag_id].filter(Boolean).join(', ')}</small>
         </span>
         <button className="icon-button" onClick={() => setEditing(true)} aria-label="Edit person">
           <Icon name="sliders" size={20} />
         </button>
       </div>
 
-      <section className={`hero hero--${hero.tone}`} aria-live="polite">
-        <span className="hero__disc"><Icon name={hero.icon} size={30} /></span>
-        <span className="hero__title">{hero.title}</span>
-        <span className="hero__line">{hero.line}</span>
-      </section>
+      <StatusHead tone={hero.tone as Tone} icon={hero.icon} title={hero.title} line={hero.line} />
 
       {station && (
         <>
@@ -258,7 +256,7 @@ export function WorkerPage(props: {
             <span className="page-head__icon"><Icon name={KIND_ICON[kindOf(station)]} size={20} /></span>
             <span className="row__text">
               <small>At</small>
-              <strong>{station.name}{station.site ? ` · ${station.site}` : ''}</strong>
+              <strong>{station.name}{station.site ? `, ${station.site}` : ''}</strong>
             </span>
             <time>{ago(station.last_seen_at, serverNow)}</time>
             <Icon name="chevron" size={16} />

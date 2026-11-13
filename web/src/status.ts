@@ -63,9 +63,9 @@ export const gearStatuses = (d: DeviceState): GearStatus[] =>
 export const unsafeGear = (d: DeviceState): GearType[] =>
   gearStatuses(d).filter((g) => g.state === 'missing' || g.state === 'not_worn').map((g) => g.type);
 
-/** "Mantas · Pavilniai forest" */
+/** "Mantas, Pavilniai forest" */
 export function subtitle(d: DeviceState): string {
-  return [operatorOf(d), d.site].filter(Boolean).join(' · ') || kindInfo(d).label;
+  return [operatorOf(d), d.site].filter(Boolean).join(', ') || kindInfo(d).label;
 }
 
 /** The longer explanation, shown only in the details sheet. */
@@ -100,11 +100,21 @@ export function gearProblem(d: DeviceState): string {
   return `No ${list}`;
 }
 
+/** "Mantas isn't wearing chaps or gloves." Full sentence for the status headline. */
+export function gearSentence(d: DeviceState): string {
+  const who = operatorOf(d) ?? 'The operator';
+  const bad = gearStatuses(d).filter((g) => g.state === 'missing' || g.state === 'not_worn');
+  if (bad.length === 0) return `${who} is missing required gear.`;
+  const names = bad.map((g) => GEAR_INFO[g.type].short);
+  const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} or ${names[names.length - 1]}`;
+  return `${who} isn't wearing ${list}.`;
+}
+
 /** One short line under an alert title. */
 export function alertLine(type: AlertType, d: DeviceState): string {
   switch (type) {
     case 'unprotected_use':
-      return gearProblem(d) + (d.lock_engaged ? ' · locked' : '');
+      return gearProblem(d) + (d.lock_engaged ? ', locked' : '');
     case 'crash_detected':
       return `Check on ${operatorOf(d) ?? 'the operator'} now`;
     case 'geofence_exit':
@@ -168,8 +178,10 @@ export function hero(d: DeviceState, serverNow: number): Hero {
     return {
       tone: 'alert',
       icon: lockedTitle ? 'lock' : EVENT_ICON[top],
-      title: lockedTitle ? 'Locked: no protection' : title(top),
-      line: top === 'unprotected_use' ? `${gearProblem(d)}${who ? ` · ${who}` : ''}` : alertLine(top, d),
+      title: lockedTitle ? 'Locked' : title(top),
+      line: top === 'unprotected_use'
+        ? `${gearSentence(d)}${lockedTitle ? ' It unlocks when the gear is back on.' : ''}`
+        : alertLine(top, d),
       alert: top,
       help: ALERT_HELP[top],
     };
@@ -186,7 +198,7 @@ export function hero(d: DeviceState, serverNow: number): Hero {
       tone: 'ok',
       icon: 'check',
       title: 'Protected',
-      line: `${who ?? info.label} · ${info.inUse.toLowerCase()}${unknown ? '' : ' with all gear'}`,
+      line: unknown ? `${who ?? 'The operator'} has all tagged gear on.` : `${who ?? 'The operator'} has all gear on.`,
       alert: null,
       help: unknown
         ? 'In use and all tagged gear is on. Some required gear has no tag, so Helmetto cannot check it.'
@@ -298,7 +310,7 @@ export function workerStatus(station: DeviceState | null): WorkerStatus {
     const unknown = gearStatuses(station).some((g) => g.state === 'unknown');
     return { tone: 'ok', label: unknown ? 'Working, tagged gear on' : 'Working, protected', station };
   }
-  return { tone: 'unknown', label: `At station · ${kindInfo(station).idle.toLowerCase()}`, station };
+  return { tone: 'unknown', label: `At station, equipment ${kindInfo(station).idle.toLowerCase()}`, station };
 }
 
 /** "45 s", "12 min", "3 h 20 min" */
@@ -369,8 +381,8 @@ export function fleetHero(devices: DeviceState[]): FleetHero {
     return {
       tone: alertTone(alert),
       icon: locked ? 'lock' : EVENT_ICON[alert],
-      title: locked ? 'Locked: no protection' : title(alert),
-      line: `${device.name} · ${alert === 'unprotected_use' ? gearProblem(device) : who ?? alertLine(alert, device)}`,
+      title: locked ? `${device.name} locked` : `${device.name}: ${title(alert).toLowerCase()}`,
+      line: alert === 'unprotected_use' ? gearSentence(device) : `${who ? `${who}. ` : ''}${alertLine(alert, device)}.`,
       deviceId: device.device_id,
       more: urgent.length - 1,
     };
@@ -381,6 +393,9 @@ export function fleetHero(devices: DeviceState[]): FleetHero {
   }
   const inUse = reported.filter((d) => d.in_use).length;
   const idle = reported.length - inUse;
-  const parts = [inUse ? `${inUse} in use` : null, idle ? `${idle} not in use` : null].filter(Boolean);
-  return { tone: 'ok', icon: 'check', title: 'All protected', line: parts.join(' · '), deviceId: null, more: 0 };
+  const line =
+    inUse === 0
+      ? 'Nothing is running right now.'
+      : `${inUse === 1 ? '1 tool is' : `${inUse} tools are`} running and everyone has their gear on.${idle ? ` ${idle} switched off.` : ''}`;
+  return { tone: 'ok', icon: 'check', title: 'All protected', line, deviceId: null, more: 0 };
 }

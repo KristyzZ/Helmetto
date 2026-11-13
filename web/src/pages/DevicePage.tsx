@@ -3,17 +3,17 @@ import type { AlertType, DeviceState, SafetyEvent } from '@helmetto/shared';
 import { AckButton } from '../AckButton';
 import { api } from '../api';
 import { EquipmentSettings } from '../EquipmentSettings';
+import { GearBoard } from '../GearBoard';
+import { StatusHead } from '../StatusHead';
 import { Icon } from '../icons';
 import { MapView } from '../MapView';
 import { Sheet } from '../Sheet';
 import {
   ALERT_HELP,
   EVENT_ICON,
-  GEAR_ICON,
   KIND_ICON,
   alertTone,
   chips,
-  gearTiles,
   hasReported,
   hero,
   kindOf,
@@ -47,7 +47,6 @@ export function DevicePage(props: {
   const summary = hero(device, serverNow);
   const others = visibleAlerts(device).filter((type) => type !== summary.alert);
   const chipList = chips(device, serverNow);
-  const gear = gearTiles(device);
   const { position, live } = location(device);
   const zone = zoneLabel(device);
   const shown = visibleAlerts(device) as string[];
@@ -83,15 +82,15 @@ export function DevicePage(props: {
         </button>
       </div>
 
-      <button className={`hero hero--${summary.tone}`} onClick={() => setDetail({ kind: 'hero' })} aria-live="polite">
-        <span className="hero__disc"><Icon name={summary.icon} size={30} /></span>
-        <span className="hero__title">{summary.title}</span>
-        <span className="hero__line">{summary.line}</span>
-        <span className="hero__foot">
-          <span>{hasReported(device) ? `Updated ${ago(device.last_seen_at, serverNow)}` : 'Not connected'}</span>
-          <span className="hero__more">Details <Icon name="chevron" size={14} /></span>
-        </span>
-      </button>
+      <StatusHead
+        tone={summary.tone}
+        icon={summary.icon}
+        title={summary.title}
+        line={summary.tone === 'unknown' ? summary.help : summary.line}
+        foot={hasReported(device) ? `Updated ${ago(device.last_seen_at, serverNow)}` : undefined}
+        action="What to do"
+        onClick={() => setDetail({ kind: 'hero' })}
+      />
 
       {others.length > 0 && (
         <ul className="list">
@@ -120,15 +119,8 @@ export function DevicePage(props: {
 
       <section>
         <h2 className="label">Required gear</h2>
-        <div className="gear-grid">
-          {gear.map((g) => (
-            <div key={g.type} className={`gear gear--${g.tone}`}>
-              <span className={`gear__icon tone-${g.tone}`}><Icon name={GEAR_ICON[g.type]} size={22} /></span>
-              <span className="gear__value">{g.value}</span>
-              <span className="gear__label">{g.label}</span>
-            </div>
-          ))}
-          {gear.length === 0 && <p className="empty">No gear required. Add some in settings.</p>}
+        <div className={`board board--static board--${summary.tone === 'alert' ? 'alert' : 'ok'}`}>
+          <GearBoard device={device} large />
         </div>
       </section>
 
@@ -183,7 +175,7 @@ export function DevicePage(props: {
       {detail && openAlert && (
         <Sheet title={summary.alert === openAlert ? summary.title : title(openAlert)} icon={EVENT_ICON[openAlert]} tone={alertTone(openAlert)} onClose={close}>
           <p>{ALERT_HELP[openAlert]}</p>
-          {since(openAlert) && <p className="meta">Since {clock(since(openAlert)!)} · {duration(since(openAlert), serverNow)}</p>}
+          {since(openAlert) && <p className="meta">Since {clock(since(openAlert)!)}, {duration(since(openAlert), serverNow)}</p>}
           <AckButton event={activeEvent(events, openAlert)} serverNow={serverNow} onDone={props.onEvent} />
           <div className="sheet__actions">
             {position && <button className="button" onClick={props.onOpenMap}>Show on map</button>}

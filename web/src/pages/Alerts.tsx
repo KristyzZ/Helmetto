@@ -88,7 +88,7 @@ export function Alerts(props: {
                     <span className={`disc disc--sm tone-${alertTone(alert)}`}><Icon name={EVENT_ICON[alert]} size={18} /></span>
                     <span className="row__text">
                       <strong>{device.name}</strong>
-                      <small>{title(alert)} · {alertLine(alert, device)}</small>
+                      <small>{alertLine(alert, device)}</small>
                     </span>
                     {activeEvent(alerts[device.device_id] ?? [], alert)?.acknowledged_at && <span className="tag tone-unknown">Seen</span>}
                     {start && <time>{duration(start, serverNow)}</time>}
@@ -120,7 +120,7 @@ export function Alerts(props: {
                         <span>{title(event.type)}</span>
                         <small>
                           {names[event.device_id] ?? event.device_id}
-                          {event.worker_id && people[event.worker_id] ? ` · ${people[event.worker_id]}` : ''}
+                          {event.worker_id && people[event.worker_id] ? `, ${people[event.worker_id]}` : ''}
                         </small>
                       </span>
                       <time dateTime={event.created_at}>{clock(event.created_at)}</time>
