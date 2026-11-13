@@ -40,12 +40,40 @@ Send one reading about every **5 seconds** while the scooter is on.
 
 | Field | Type | Meaning |
 |---|---|---|
-| `helmet_connected` | boolean, **required** | `true` if the scooter heard a helmet heartbeat in the last 15 s, else `false`. |
+| `helmet_connected` | boolean, **required** | `true` if the equipment heard its gear tag's heartbeat in the last 15 s, else `false`. With several tags: `true` only if all are in range. |
 | `helmet_worn` | boolean \| null | Wearing sensor. `null` until the hardware has one. |
 | `latitude`, `longitude` | number \| null | Decimal degrees (WGS84). `null` without GPS or without a fix. |
 | `speed_kmh` | number \| null | 0–200. |
 | `battery_percent` | number \| null | 0–100. |
-| `crash_detected` | boolean \| null | `true` while the accelerometer reports a crash. `null` if there is no accelerometer. |
+| `crash_detected` | boolean \| null | `true` while the accelerometer reports a hard impact. `null` if there is no accelerometer. |
+| `equipment_active` | boolean \| null, optional | `true` while the equipment is in use: tool switched on, saw running, boat under way. `null`/missing = can't tell; the server then assumes a reporting device is in use. |
+| `gear` | array \| null, optional | One entry per paired gear tag: `{"type": "...", "connected": true, "worn": null}`. See below. When present it is used instead of `helmet_connected` / `helmet_worn`. |
+| `locked` | boolean \| null, optional | `true` while the equipment is locked out. `null` = no lock hardware. |
+
+#### Gear tags (`gear`)
+
+`type` is one of `helmet`, `eye_protection`, `ear_protection`, `gloves`,
+`chaps`, `life_jacket`. `connected` (required) = heartbeat heard in the last
+15 s. `worn` = wearing sensor, `null`/missing if the tag has none.
+
+```json
+{
+  "helmet_connected": false,
+  "crash_detected": false,
+  "equipment_active": true,
+  "gear": [
+    { "type": "helmet", "connected": true, "worn": null },
+    { "type": "chaps", "connected": false },
+    { "type": "ear_protection", "connected": true }
+  ],
+  "locked": false
+}
+```
+
+Hardware with a single tag can keep sending only `helmet_connected`: the
+server then reads it as the state of the **first** required gear item of that
+device (for example safety glasses on an angle grinder). Other required items
+show as "no tag" and never raise an alert.
 
 Rules:
 
@@ -62,7 +90,7 @@ Rules:
 
 | Status | Body | What to do |
 |---|---|---|
-| `200` | `{"ok":true,"received_at":"2026-01-01T12:00:00.000Z"}` | Nothing. |
+| `200` | `{"ok":true,"received_at":"2026-01-01T12:00:00.000Z","lock":false}` | If the equipment has lock hardware: `lock: true` = keep it locked (can't start); `false` = allow it. Older servers leave `lock` out: treat that as `false`. |
 | `400` | `{"error":"invalid_payload","message":"helmet_connected: helmet_connected is required","details":[...]}` | Fix the JSON. `message` says which field. |
 | `401` | `{"error":"missing_device_key" \| "invalid_device_key", ...}` | Check the `X-Device-Key` header. |
 | `404` | `{"error":"unknown_device", ...}` | Check the device ID in the URL. |
@@ -71,19 +99,22 @@ On a network error or 5xx just try again on the next cycle; no retry queue is ne
 
 ### What the server derives
 
+Each device has a profile set in the app: its kind (power tool, chainsaw, boat,
+…), the gear it requires, and whether auto-lock is on.
+
 | Situation | Result in the app |
 |---|---|
-| `helmet_connected` goes `true → false` | Alert **Helmet disconnected** (once) |
-| `helmet_worn` goes to `false` | Alert **Helmet not worn** (once) |
-| `crash_detected` goes to `true` | Alert **Crash detected** (once) |
-| Position leaves the parent's safe zone (circle or drawn shape) | Alert **Left the safe zone** (once) |
-| **No telemetry at all for 30 s** | **Scooter offline** (this is not "helmet disconnected") |
+| In use while a required gear tag is not connected, or `worn: false` | Alert **No protection** (once), naming the missing gear |
+| Same, with auto-lock on | Alert **No protection** and `lock: true` in every response until the gear is back. The alert stays active while it is locked. |
+| Gear missing but the equipment is off (`equipment_active: false`) | Nothing: gear is only required while in use |
+| `crash_detected` goes to `true` | Alert **Impact detected** (once) |
+| Position leaves the work area (circle or drawn shape) | Alert **Left the work area** (once) |
+| **No telemetry at all for 30 s** | **Offline** (gear status becomes unknown) |
 
 Alerts fire on the change only, never once per reading. The matching recovery
-(helmet reconnected, back in zone, scooter back online, …) is logged when the
-condition ends. So the scooter should keep sending telemetry with
-`helmet_connected: false` when the helmet is gone; if it stops sending, the
-parent sees "scooter offline" instead.
+(**Safe again**, back in the work area, back online, …) is logged when the
+condition ends. So the equipment should keep sending telemetry while gear is
+missing; if it stops sending, the manager sees "offline" instead.
 
 ### Example: curl
 
@@ -94,7 +125,16 @@ curl -X POST "http://localhost:3000/api/devices/scooter-001/telemetry" \
   -d '{"helmet_connected":true,"helmet_worn":null,"latitude":null,"longitude":null,"speed_kmh":null,"battery_percent":null,"crash_detected":false}'
 ```
 
-Helmet lost:
+A chainsaw running without chaps:
+
+```bash
+curl -X POST "http://localhost:3000/api/devices/demo-chainsaw/telemetry" \
+  -H "Content-Type: application/json" \
+  -H "X-Device-Key: $DEVICE_API_KEY" \
+  -d '{"helmet_connected":false,"crash_detected":false,"equipment_active":true,"gear":[{"type":"helmet","connected":true},{"type":"chaps","connected":false},{"type":"ear_protection","connected":true}]}'
+```
+
+Single-tag hardware, tag lost:
 
 ```bash
 curl -X POST "http://localhost:3000/api/devices/scooter-001/telemetry" \
@@ -195,13 +235,13 @@ Notes for the hardware side:
 
 ---
 
-## 2. Parent app API (app → server)
+## 2. App API (app → server)
 
 No authentication in the hackathon build (see README, "Known gaps").
 
 ### `GET /api/devices`
 
-All scooters of the parent.
+All equipment of the account.
 
 ```json
 { "devices": [ { "...": "DeviceState, see below" } ] }
@@ -212,8 +252,20 @@ All scooters of the parent.
 ```json
 {
   "device_id": "scooter-001",
-  "name": "Demo scooter",
-  "child_name": "Emma",
+  "name": "Chainsaw",
+  "child_name": "Mantas",
+  "operator_name": "Mantas",
+  "kind": "chainsaw",
+  "site": "Pavilniai forest",
+  "required_gear": ["helmet", "chaps", "ear_protection"],
+  "gear_status": [
+    { "type": "helmet", "state": "ok" },
+    { "type": "chaps", "state": "missing" },
+    { "type": "ear_protection", "state": "ok" }
+  ],
+  "in_use": false,
+  "auto_lock": true,
+  "lock_engaged": true,
   "online": true,
   "last_seen_at": "2026-01-01T12:00:00.000Z",
   "telemetry": {
@@ -233,12 +285,16 @@ All scooters of the parent.
 }
 ```
 
-- `child_name` is the rider's name, or `null` when not set. Alert messages use it ("Emma left the safe zone.").
+- `kind`: `power_tool` | `chainsaw` | `boat` | `scooter` | `other`.
+- `operator_name`: who uses it, or `null`. `child_name` carries the same value for older clients.
+- `required_gear`: gear that must be present while in use. `gear_status[].state`: `ok` | `missing` | `not_worn` | `unknown` (no tag for it, or offline).
+- `in_use`: from `equipment_active` (unknown counts as in use); `null` while offline or never reported.
+- `lock_engaged`: the server is currently answering `lock: true` to this device.
 - `geofence` is `null` when no zone is set; see `PUT .../geofence` below for its two shapes.
 - `online: false` with `last_seen_at: null` → the scooter has never reported.
 - `online: false` otherwise → **scooter offline**; `telemetry` is the *last known*
   reading and must not be shown as current (in particular not as "helmet disconnected").
-- `active_alerts` ⊆ `crash_detected`, `helmet_disconnected`, `helmet_not_worn`, `geofence_exit`, `scooter_offline`.
+- `active_alerts` ⊆ `unprotected_use`, `crash_detected`, `geofence_exit`, `scooter_offline` (and, from older servers, `helmet_disconnected`, `helmet_not_worn`).
 - `zone_status`: `inside` | `outside` | `unknown` (no zone, or no valid GPS in the latest reading).
 - `last_location` keeps the last valid GPS fix when newer readings have none.
 
@@ -274,12 +330,12 @@ Safety history, newest first. `before` pages further back.
 ```
 
 `type` is one of the alert types above (`severity: "alert"`) or a recovery
-(`severity: "recovery"`): `helmet_reconnected`, `helmet_worn`, `crash_cleared`,
-`geofence_enter`, `scooter_online`.
+(`severity: "recovery"`): `protection_restored`, `crash_cleared`,
+`geofence_enter`, `scooter_online` (older servers also `helmet_reconnected`, `helmet_worn`).
 
 ### `PUT /api/devices/:deviceId/geofence`
 
-Set the safe zone. Returns the new `DeviceState`. Two shapes are accepted.
+Set the work area (safe zone). Returns the new `DeviceState`. Two shapes are accepted.
 
 **Circle** (the original format, unchanged). `shape` may be left out. Radius 50–5000 m.
 
@@ -332,13 +388,23 @@ Remove the safe zone. Returns the new `DeviceState`.
 
 ### `PATCH /api/devices/:deviceId`
 
-Rename the scooter and/or set the child's name. Send only the fields to change.
-Names are 1–40 characters; `"child_name": null` clears it. Returns the new `DeviceState`.
+Change the equipment's profile. Send only the fields to change. Returns the new
+`DeviceState`. A new gear list or auto-lock setting takes effect at once on the
+latest reading.
+
+| Field | Type |
+|---|---|
+| `name` | string, 1–40 characters |
+| `operator_name` (or `child_name`) | string, 1–40, or `null` to clear |
+| `site` | string, 1–40, or `null` to clear |
+| `kind` | `power_tool` \| `chainsaw` \| `boat` \| `scooter` \| `other` |
+| `required_gear` | array of gear types |
+| `auto_lock` | boolean |
 
 ```bash
 curl -X PATCH "http://localhost:3000/api/devices/scooter-001" \
   -H "Content-Type: application/json" \
-  -d '{"child_name":"Emma"}'
+  -d '{"kind":"power_tool","operator_name":"Tomas","site":"Workshop","required_gear":["eye_protection","ear_protection","gloves"],"auto_lock":false}'
 ```
 
 ### `GET /api/stream` (Server-Sent Events)
@@ -366,15 +432,21 @@ curl -N http://localhost:3000/api/stream
 
 ## 3. Demo mode
 
-Only when the server runs with `DEMO_MODE=true` (default in local dev).
+Only when the server runs with `DEMO_MODE=true` (default in local dev). Demo
+mode also adds two simulated devices next to the hardware one:
+`demo-chainsaw` (forest, auto-lock on) and `demo-boat` (lake).
 
-- `GET /api/demo` → `{ "enabled": true, "running": false, "scenario": null, "device_id": "scooter-001" }`
-- `POST /api/demo` with `{"scenario":"<name>"}` starts or switches the built-in
-  simulator; `{"scenario":"stop"}` stops it.
+- `GET /api/demo` → `{ "enabled": true, "running": false, "scenario": null, "device_id": "scooter-001", "runs": [], "devices": ["scooter-001", "demo-chainsaw", "demo-boat"] }`
+- `POST /api/demo` with `{"scenario":"<name>","device_id":"demo-chainsaw"}` starts
+  or switches that device's simulator (`device_id` defaults to the hardware device).
+- `{"scenario":"start-all"}` starts every device in normal use; `{"scenario":"stop"}`
+  stops all of them (or only `device_id` if given).
 
-Scenarios: `normal`, `helmet-disconnect`, `helmet-reconnect`, `helmet-not-worn`,
-`crash`, `geofence-exit`, `offline`.
+Scenarios: `normal`, `gear-removed`, `gear-back`, `idle`, `crash`,
+`geofence-exit`, `offline`. The original `helmet-disconnect`,
+`helmet-reconnect` and `helmet-not-worn` still work.
 
 The simulator (also `npm run simulate`) sends real telemetry to
-`POST /api/devices/:deviceId/telemetry` with the device key, so mock data takes
-the same path as hardware.
+`POST /api/devices/:deviceId/telemetry` with the device key, and obeys `lock`
+in the response like lock hardware would, so mock data takes the same path as
+hardware.
