@@ -123,7 +123,12 @@ export class TagInUseError extends Error {
 export class SafetyService extends EventEmitter {
   constructor(
     private store: Store,
-    private options: { offlineTimeoutMs: number; now?: () => number },
+    private options: {
+      offlineTimeoutMs: number;
+      now?: () => number;
+      /** Devices configured on the server; they can't be removed (they come back on restart). */
+      fixedDeviceIds?: readonly string[];
+    },
   ) {
     super();
     this.setMaxListeners(0);
@@ -153,6 +158,7 @@ export class SafetyService extends EventEmitter {
       auto_lock: device.autoLock,
       lock_engaged: check?.lock ?? device.manualLock,
       manual_lock: device.manualLock,
+      removable: !this.options.fixedDeviceIds?.includes(device.id),
       online,
       last_seen_at: device.lastSeenAt === null ? null : new Date(device.lastSeenAt).toISOString(),
       telemetry: t,
@@ -305,10 +311,12 @@ export class SafetyService extends EventEmitter {
     return { device, api_key: apiKey };
   }
 
-  deleteDevice(deviceId: string): boolean {
-    const removed = this.store.deleteDevice(deviceId);
-    if (removed) this.emit('device_removed', { device_id: deviceId });
-    return removed;
+  /** Remove equipment with its history. 'fixed' = configured on the server. */
+  deleteDevice(deviceId: string): 'removed' | 'not_found' | 'fixed' {
+    if (this.options.fixedDeviceIds?.includes(deviceId)) return 'fixed';
+    if (!this.store.deleteDevice(deviceId)) return 'not_found';
+    this.emit('device_removed', { device_id: deviceId });
+    return 'removed';
   }
 
   /** Mark an alert as seen by a manager. null = no such alert. */

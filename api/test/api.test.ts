@@ -50,7 +50,7 @@ const alertTypes = async () =>
 beforeAll(async () => {
   const store = new Store(':memory:');
   store.seedDevice(config.device);
-  service = new SafetyService(store, { offlineTimeoutMs: config.offlineTimeoutMs, now: () => now });
+  service = new SafetyService(store, { offlineTimeoutMs: config.offlineTimeoutMs, now: () => now, fixedDeviceIds: [config.device.id] });
   const server = createApp({ config, store, service }).listen(0);
   await new Promise((resolve) => server.once('listening', resolve));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -424,6 +424,12 @@ describe('new features', () => {
     await json('PATCH', `/api/devices/${id}`, { manual_lock: false });
     const res2 = await postAs(created.api_key, reading({ equipment_active: false }));
     expect(((await res2.json()) as { lock: boolean }).lock).toBe(false);
+  });
+
+  it('marks which equipment can be removed', async () => {
+    const { devices } = (await (await fetch(`${base}/api/devices`)).json()) as DevicesResponse;
+    expect(devices.find((d) => d.device_id === 'test-scooter')?.removable).toBe(false);
+    expect(devices.find((d) => d.device_id === created.device.device_id)?.removable).toBe(true);
   });
 
   it('removes equipment, but not the one configured on the server', async () => {

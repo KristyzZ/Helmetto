@@ -15,7 +15,10 @@ for (const device of config.demoDevices) store.seedDevice(device);
 store.pruneDemoDevices(config.demoDevices.map((d) => d.id));
 for (const w of config.demoWorkers) store.insertWorker({ id: w.id, name: w.name, role: w.role, tagId: w.tagId }, true);
 
-const service = new SafetyService(store, { offlineTimeoutMs: config.offlineTimeoutMs });
+const service = new SafetyService(store, {
+  offlineTimeoutMs: config.offlineTimeoutMs,
+  fixedDeviceIds: [config.device.id],
+});
 const demo = new DemoRunner(config);
 const app = createApp({ config, store, service, demo });
 

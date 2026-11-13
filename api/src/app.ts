@@ -94,10 +94,12 @@ export function createApp(deps: {
 
   app.delete(ROUTE_PATTERNS.device, (req, res) => {
     const deviceId = String(req.params.deviceId);
-    if (deviceId === config.device.id) {
+    const result = service.deleteDevice(deviceId);
+    if (result === 'fixed') {
       return fail(res, 409, 'configured_device', 'This device is configured on the server (DEVICE_ID) and comes back on restart');
     }
-    if (!service.deleteDevice(deviceId)) return fail(res, 404, 'unknown_device', 'No such device');
+    if (result === 'not_found') return fail(res, 404, 'unknown_device', 'No such device');
+    demo?.stop(deviceId); // a simulated device that no longer exists shouldn't keep posting
     res.status(204).end();
   });
 

@@ -55,7 +55,7 @@ export class DemoRunner {
     return this.status();
   }
 
-  /** Stop one device, or all of them. */
+  /** Stop one device's simulator (no-op if it isn't running), or all of them. */
   stop(deviceId?: string): DemoStatus {
     for (const [id, simulator] of this.simulators) {
       if (deviceId && id !== deviceId) continue;
