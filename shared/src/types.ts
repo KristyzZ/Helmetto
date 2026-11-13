@@ -199,6 +199,8 @@ export interface DeviceState {
   worker_id?: string | null;
   /** That worker's name, for convenience. */
   worker_name?: string | null;
+  /** false = configured on the server (DEVICE_ID): it can't be removed from the app. */
+  removable?: boolean;
   /**
    * Scooter sent telemetry within the last 30 s.
    * false + helmet data present means "scooter offline", NOT "helmet disconnected":
