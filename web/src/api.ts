@@ -11,8 +11,15 @@ import {
   type SafetyEvent,
 } from '@helmetto/shared';
 
+/**
+ * Where the server is. Empty = the same address the app was loaded from (the
+ * website). The iOS app is loaded from inside the phone, so it is built with
+ * VITE_API_URL set to the deployed server, e.g. https://helmetto.onrender.com.
+ */
+export const API_BASE = ((import.meta.env.VITE_API_URL as string | undefined) ?? '').replace(/\/+$/, '');
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init);
+  const res = await fetch(API_BASE + url, init);
   if (!res.ok) {
     let message = `Request failed (${res.status})`;
     try {

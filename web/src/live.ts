@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { routes, type DeviceState, type DevicesResponse, type SafetyEvent } from '@helmetto/shared';
-import { api } from './api';
+import { API_BASE, api } from './api';
 
 /**
  * live:       SSE stream open
@@ -113,7 +113,7 @@ export function useLive(onNewEvent: (event: SafetyEvent) => void): Live {
 
     let source: EventSource | null = null;
     if ('EventSource' in window) {
-      source = new EventSource(routes.stream());
+      source = new EventSource(API_BASE + routes.stream());
       source.addEventListener('open', () => {
         streamOpen = true;
         setConnection('live');

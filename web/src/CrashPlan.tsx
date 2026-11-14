@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { Capacitor } from '@capacitor/core';
+import { Share } from '@capacitor/share';
 import { NAME_MAX_LENGTH, type DeviceState, type SafetyEvent } from '@helmetto/shared';
 import { api } from './api';
 import { Icon } from './icons';
@@ -94,6 +96,10 @@ export function CrashPlan(props: {
       ? `Helmetto: ${name} may have crashed on the scooter${when}. Last location: ${mapsUrl(position)}`
       : `Helmetto: ${name} may have crashed on the scooter${when}. The location isn't known yet.`;
     try {
+      if (Capacitor.isNativePlatform()) {
+        await Share.share({ title: `${name} may need help`, text, dialogTitle: 'Send to another adult' });
+        return;
+      }
       if (navigator.share) {
         await navigator.share({ title: `${name} may need help`, text });
         return;
@@ -102,7 +108,7 @@ export function CrashPlan(props: {
       setNote('Copied. Paste it into a message to another adult.');
     } catch (e) {
       // The person closed the share sheet: nothing to report.
-      if ((e as Error).name === 'AbortError') return;
+      if ((e as Error).name === 'AbortError' || /cancel/i.test((e as Error).message)) return;
       setNote("Couldn't open sharing on this device.");
     }
   };
