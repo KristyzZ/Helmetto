@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { AlertType, DeviceState, SafetyEvent } from '@helmetto/shared';
+import { api } from '../api';
 import { Icon } from '../icons';
 import { CrashPlan, crashToHandle } from '../CrashPlan';
 import { NotifyPrompt } from '../NotifyPrompt';
@@ -53,6 +54,13 @@ export function Dashboard(props: {
 }) {
   const { device, events, serverNow, offline } = props;
   const [detail, setDetail] = useState<Detail | null>(null);
+  // Demo server: the scooter is simulated, so the setup guide would only confuse. null = not known yet.
+  const [demo, setDemo] = useState<boolean | null>(null);
+  const waiting = !hasReported(device) && device.device_id !== 'offline';
+  useEffect(() => {
+    if (!waiting || demo !== null) return;
+    api.demoStatus().then((s) => setDemo(s.enabled), () => {});
+  }, [waiting, demo]);
 
   const facts = chips(device, serverNow);
   const { position, live } = location(device);
@@ -103,15 +111,26 @@ export function Dashboard(props: {
       <div className="home home--empty">
         <div className="empty-state">
           <span className="empty-state__icon"><Icon name={neverConnected ? 'signalOff' : 'scooter'} size={40} /></span>
-          <h2>{summary.title}</h2>
-          <p>{neverConnected ? summary.line : `Switch ${childName(device) ? `${childName(device)}'s` : 'the'} scooter on near Wi-Fi to see where it is and whether the helmet is on.`}</p>
-          <button className="button button--primary" onClick={() => setDetail({ kind: 'hero' })}>
-            {neverConnected ? 'What to check' : 'How to connect'}
-          </button>
+          {neverConnected ? (
+            <>
+              <h2>{summary.title}</h2>
+              <p>{summary.line}</p>
+            </>
+          ) : (
+            <>
+              <h2>Waiting for the scooter</h2>
+              <p>{`${childName(device) ? `${childName(device)}'s` : 'The'} helmet and location show here as soon as the scooter sends its first update.`}</p>
+            </>
+          )}
+          {(neverConnected || demo === false) && (
+            <button className="button button--primary" onClick={() => setDetail({ kind: 'hero' })}>
+              {neverConnected ? 'What to check' : 'How it connects'}
+            </button>
+          )}
           {offline?.server && <p className="home__server">Server: {offline.server}</p>}
         </div>
         {detail?.kind === 'hero' && (
-          <Sheet title={neverConnected ? 'What to check' : 'How to connect'} icon={summary.icon} tone={summary.tone} onClose={() => setDetail(null)}>
+          <Sheet title={neverConnected ? 'What to check' : 'How it connects'} icon={summary.icon} tone={summary.tone} onClose={() => setDetail(null)}>
             {neverConnected ? (
               <ol className="steps">
                 <li>Check that this phone has internet.</li>
@@ -120,10 +139,9 @@ export function Dashboard(props: {
               </ol>
             ) : (
               <ol className="steps">
-                <li>Switch the scooter on.</li>
-                <li>Keep it near the Wi-Fi it was set up with.</li>
-                <li>Put the helmet on: the scooter finds it by itself.</li>
-                <li>Within a minute this screen shows the map and the helmet status.</li>
+                <li>Switch the scooter on. Its chip joins the 2.4 GHz Wi-Fi it was set up with; a phone's Personal Hotspot works too.</li>
+                <li>Switch the helmet on. Its chip finds the scooter's chip by itself, with no pairing.</li>
+                <li>The scooter sends an update every few seconds. This screen shows the helmet as soon as the first one arrives.</li>
               </ol>
             )}
           </Sheet>
