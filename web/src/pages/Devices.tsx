@@ -1,14 +1,16 @@
 import { useState } from 'react';
-import { NAME_MAX_LENGTH, type DeviceState } from '@helmetto/shared';
+import { NAME_MAX_LENGTH, PHONE_MAX_LENGTH, type DeviceState } from '@helmetto/shared';
 import { api } from '../api';
 import { Icon } from '../icons';
 import { Sheet } from '../Sheet';
 import { childName, displayName, hasReported, visibleAlerts } from '../status';
 import { ago } from '../time';
 
-function EditSheet(props: { device: DeviceState; onClose: () => void; onSaved: (state: DeviceState) => void }) {
+/** Scooter settings: the child's name and phone number, and the scooter's name. */
+export function EditSheet(props: { device: DeviceState; onClose: () => void; onSaved: (state: DeviceState) => void; focusPhone?: boolean }) {
   const { device } = props;
   const [child, setChild] = useState(device.child_name ?? '');
+  const [phone, setPhone] = useState(device.child_phone ?? '');
   const [name, setName] = useState(device.name);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -17,7 +19,9 @@ function EditSheet(props: { device: DeviceState; onClose: () => void; onSaved: (
     setBusy(true);
     setError(null);
     try {
-      props.onSaved(await api.updateDevice(device.device_id, { child_name: child.trim() || null, name: name.trim() }));
+      props.onSaved(
+        await api.updateDevice(device.device_id, { child_name: child.trim() || null, child_phone: phone.trim() || null, name: name.trim() }),
+      );
       props.onClose();
     } catch (e) {
       setError((e as Error).message);
@@ -30,6 +34,20 @@ function EditSheet(props: { device: DeviceState; onClose: () => void; onSaved: (
       <label className="field">
         <span>Child's name</span>
         <input value={child} maxLength={NAME_MAX_LENGTH} placeholder="e.g. Emma" autoComplete="off" onChange={(e) => setChild(e.target.value)} />
+      </label>
+      <label className="field">
+        <span>{child.trim() ? `${child.trim()}'s phone number` : "Child's phone number"}</span>
+        <input
+          type="tel"
+          inputMode="tel"
+          value={phone}
+          maxLength={PHONE_MAX_LENGTH}
+          placeholder="e.g. +370 612 34567"
+          autoComplete="off"
+          autoFocus={props.focusPhone}
+          onChange={(e) => setPhone(e.target.value)}
+        />
+        <small>Used by the Call button if Helmetto detects a crash.</small>
       </label>
       <label className="field">
         <span>Scooter name</span>

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { AlertType, DeviceState, SafetyEvent } from '@helmetto/shared';
 import { Icon } from '../icons';
+import { CrashPlan, crashToHandle } from '../CrashPlan';
 import { MapView } from '../MapView';
 import { Sheet } from '../Sheet';
 import {
@@ -40,17 +41,33 @@ export function Dashboard(props: {
   serverNow: number;
   onOpenMap: () => void;
   onOpenAlerts: () => void;
+  onAcknowledged: (event: SafetyEvent) => void;
+  onSaved: (state: DeviceState) => void;
 }) {
   const { device, events, serverNow } = props;
   const [detail, setDetail] = useState<Detail | null>(null);
 
-  const summary = hero(device, serverNow);
-  const others = visibleAlerts(device).filter((type) => type !== summary.alert);
   const facts = chips(device, serverNow);
   const { position, live } = location(device);
   const zone = zoneLabel(device);
   const today = events.filter((e) => dayLabel(e.created_at) === 'Today').slice(0, TODAY_MAX);
   const name = childName(device) ?? device.name;
+  const crash = crashToHandle(device, events, serverNow);
+  // An impact is reported for a moment only: until someone is on it, keep the sticker red.
+  const base = hero(device, serverNow);
+  const crashOpen = !!crash && !crash.acknowledged_at && base.alert !== 'crash_detected';
+  const summary = crashOpen
+    ? {
+        ...base,
+        tone: 'alert' as const,
+        icon: 'alert' as const,
+        title: 'Possible crash',
+        line: `Reported at ${clock(crash.created_at)}. Check on ${childName(device) ?? 'the rider'}.`,
+        alert: 'crash_detected' as const,
+        help: ALERT_HELP.crash_detected,
+      }
+    : base;
+  const others = visibleAlerts(device).filter((type) => type !== summary.alert);
 
   const since = (type: AlertType) => events.find((e) => e.type === type)?.created_at ?? null;
   const openChip = detail?.kind === 'chip' ? facts.find((c) => c.key === detail.chip) : undefined;
@@ -89,6 +106,15 @@ export function Dashboard(props: {
       </button>
 
       <div className="home__body">
+        {crash && (
+          <CrashPlan
+            device={device}
+            event={crash}
+            serverNow={serverNow}
+            onAcknowledged={props.onAcknowledged}
+            onSaved={props.onSaved}
+          />
+        )}
         {others.length > 0 && (
           <ul className="also">
             {others.map((type) => (

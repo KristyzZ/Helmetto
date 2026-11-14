@@ -19,6 +19,8 @@ export interface Live {
   clockOffsetMs: number;
   /** Apply a state returned by a write (e.g. geofence save) without waiting for the stream. */
   applyState: (state: DeviceState) => void;
+  /** Apply a changed event (e.g. acknowledged) without waiting for the stream. */
+  applyEvent: (event: SafetyEvent) => void;
 }
 
 const POLL_FAST_MS = 4_000; // while the stream is down
@@ -48,6 +50,15 @@ export function useLive(onNewEvent: (event: SafetyEvent) => void): Live {
     });
   };
 
+  /** Replace an event we already have, e.g. after someone pressed "I'm on it". Never a new-alert toast. */
+  const applyEvent = (event: SafetyEvent) => {
+    setAlerts((all) => {
+      const list = all[event.device_id];
+      if (!list?.some((e) => e.id === event.id)) return all;
+      return { ...all, [event.device_id]: list.map((e) => (e.id === event.id ? event : e)) };
+    });
+  };
+
   useEffect(() => {
     let disposed = false;
     let streamOpen = false;
@@ -58,10 +69,14 @@ export function useLive(onNewEvent: (event: SafetyEvent) => void): Live {
       seen.current[deviceId] = Math.max(known ?? 0, ...incoming.map((e) => e.id));
       setAlerts((all) => {
         const existing = all[deviceId] ?? [];
+        const byId = new Map(incoming.map((e) => [e.id, e]));
         const ids = new Set(existing.map((e) => e.id));
         const added = incoming.filter((e) => !ids.has(e.id));
-        if (added.length === 0 && all[deviceId]) return all;
-        return { ...all, [deviceId]: [...added, ...existing].sort((a, b) => b.id - a.id) };
+        // Polling also brings acknowledgements made on another phone.
+        const changed = existing.some((e) => byId.has(e.id) && byId.get(e.id)!.acknowledged_at !== e.acknowledged_at);
+        if (added.length === 0 && !changed && all[deviceId]) return all;
+        const kept = existing.map((e) => byId.get(e.id) ?? e);
+        return { ...all, [deviceId]: [...added, ...kept].sort((a, b) => b.id - a.id) };
       });
       fresh.sort((a, b) => a.id - b.id).forEach((e) => onNewEventRef.current(e));
     };
@@ -113,6 +128,7 @@ export function useLive(onNewEvent: (event: SafetyEvent) => void): Live {
         if (seen.current[event.device_id] === undefined) seen.current[event.device_id] = event.id - 1;
         mergeAlerts(event.device_id, [event]);
       });
+      source.addEventListener('alert_update', (e) => applyEvent(JSON.parse((e as MessageEvent).data) as SafetyEvent));
       source.addEventListener('error', () => {
         // EventSource reconnects by itself; polling covers the gap
         streamOpen = false;
@@ -133,5 +149,5 @@ export function useLive(onNewEvent: (event: SafetyEvent) => void): Live {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return { loaded, connection, devices, alerts, clockOffsetMs, applyState };
+  return { loaded, connection, devices, alerts, clockOffsetMs, applyState, applyEvent };
 }

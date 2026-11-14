@@ -163,11 +163,26 @@ export function App() {
             <span>Add a device on the server to start.</span>
           </div>
         ) : tab === 'home' ? (
-          <Dashboard device={device} events={events} serverNow={serverNow} onOpenMap={() => go('map')} onOpenAlerts={() => go('alerts')} />
+          <Dashboard
+            device={device}
+            events={events}
+            serverNow={serverNow}
+            onOpenMap={() => go('map')}
+            onOpenAlerts={() => go('alerts')}
+            onAcknowledged={live.applyEvent}
+            onSaved={live.applyState}
+          />
         ) : tab === 'map' ? (
           <MapPage key={device.device_id} device={device} serverNow={serverNow} onSaved={live.applyState} />
         ) : tab === 'alerts' ? (
-          <Alerts device={device} events={events} serverNow={serverNow} onOpenMap={() => go('map')} />
+          <Alerts
+            device={device}
+            events={events}
+            serverNow={serverNow}
+            onOpenMap={() => go('map')}
+            onAcknowledged={live.applyEvent}
+            onSaved={live.applyState}
+          />
         ) : (
           <Devices
             devices={live.devices}

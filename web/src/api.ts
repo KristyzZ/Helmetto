@@ -8,6 +8,7 @@ import {
   type DeviceUpdate,
   type DevicesResponse,
   type GeofenceInput,
+  type SafetyEvent,
 } from '@helmetto/shared';
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
@@ -39,6 +40,7 @@ export const api = {
     request<DeviceState>(routes.deviceGeofence(deviceId), { method: 'DELETE' }),
   updateDevice: (deviceId: string, update: DeviceUpdate) =>
     request<DeviceState>(routes.device(deviceId), json('PATCH', update)),
+  acknowledge: (eventId: number, by: string | null) => request<SafetyEvent>(routes.alertAck(eventId), json('POST', { by })),
   demoStatus: () => request<DemoStatus>(routes.demo()),
   runDemo: (scenario: DemoScenario | 'stop') => request<DemoStatus>(routes.demo(), json('POST', { scenario })),
 };

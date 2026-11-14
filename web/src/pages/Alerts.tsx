@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { AlertType, DeviceState, SafetyEvent } from '@helmetto/shared';
 import { Icon } from '../icons';
 import { notifyPermission, requestNotifyPermission, type NotifyPermission } from '../notify';
+import { CrashPlan } from '../CrashPlan';
 import { Sheet } from '../Sheet';
 import { ALERT_HELP, EVENT_ICON, alertLine, alertTone, title, visibleAlerts } from '../status';
 import { clock, dayLabel, duration } from '../time';
@@ -41,7 +42,14 @@ function Notifications() {
   );
 }
 
-export function Alerts(props: { device: DeviceState; events: SafetyEvent[]; serverNow: number; onOpenMap: () => void }) {
+export function Alerts(props: {
+  device: DeviceState;
+  events: SafetyEvent[];
+  serverNow: number;
+  onOpenMap: () => void;
+  onAcknowledged: (event: SafetyEvent) => void;
+  onSaved: (state: DeviceState) => void;
+}) {
   const { device, events, serverNow } = props;
   const [openAlert, setOpenAlert] = useState<AlertType | null>(null);
   const [openEvent, setOpenEvent] = useState<SafetyEvent | null>(null);
@@ -118,8 +126,17 @@ export function Alerts(props: { device: DeviceState; events: SafetyEvent[]; serv
         <Sheet title={title(openAlert)} icon={EVENT_ICON[openAlert]} tone={alertTone(openAlert)} onClose={() => setOpenAlert(null)}>
           <p>{ALERT_HELP[openAlert]}</p>
           {since(openAlert) && <p className="meta">Since {clock(since(openAlert)!)}, {duration(since(openAlert), serverNow)} ago</p>}
+          {openAlert === 'crash_detected' && (
+            <CrashPlan
+              device={device}
+              event={events.find((e) => e.type === 'crash_detected') ?? null}
+              serverNow={serverNow}
+              onAcknowledged={props.onAcknowledged}
+              onSaved={props.onSaved}
+            />
+          )}
           <div className="sheet__actions">
-            <button className="button button--primary" onClick={props.onOpenMap}>Show on map</button>
+            <button className={`button ${openAlert === 'crash_detected' ? '' : 'button--primary'}`} onClick={props.onOpenMap}>Show on map</button>
           </div>
         </Sheet>
       )}
