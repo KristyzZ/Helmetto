@@ -43,8 +43,14 @@ export function Dashboard(props: {
   onOpenAlerts: () => void;
   onAcknowledged: (event: SafetyEvent) => void;
   onSaved: (state: DeviceState) => void;
+  /**
+   * Set while the server can't be reached. `since` = when the status on screen
+   * was saved on this phone (null = nothing saved); `server` = the address the
+   * iOS app is trying, to spot a wrong build.
+   */
+  offline?: { since: string | null; server: string | null } | null;
 }) {
-  const { device, events, serverNow } = props;
+  const { device, events, serverNow, offline } = props;
   const [detail, setDetail] = useState<Detail | null>(null);
 
   const facts = chips(device, serverNow);
@@ -59,7 +65,22 @@ export function Dashboard(props: {
   // Once the scooter is riding again, the sticker shows that; the plan below still asks to check.
   const ridingAgain = device.online && (device.telemetry?.speed_kmh ?? 0) > 1;
   const crashOpen = !!crash && !crash.acknowledged_at && base.alert === null && !ridingAgain;
-  const summary = crashOpen
+  const neverConnected = device.device_id === 'offline';
+  const summary = offline
+    ? {
+        ...base,
+        tone: 'unknown' as const,
+        icon: 'signalOff' as const,
+        title: neverConnected ? 'Not connected' : "Can't reach Helmetto",
+        line: neverConnected
+          ? "Helmetto can't reach its server yet. Check the internet connection; it keeps trying."
+          : `Showing the last known status${offline.since ? ` from ${clock(offline.since)}` : ''}. It updates as soon as the connection is back.`,
+        alert: null,
+        help: neverConnected
+          ? "This phone hasn't reached the Helmetto server yet, so there's no scooter status to show. It keeps trying by itself."
+          : "The phone can't reach the Helmetto server right now, so this is the status from the last time it could. It updates by itself when the connection is back.",
+      }
+    : crashOpen
     ? {
         ...base,
         tone: 'alert' as const,
@@ -82,7 +103,7 @@ export function Dashboard(props: {
         {position ? (
           <MapView
             position={position}
-            stale={!live}
+            stale={!live || !!offline}
             alert={summary.tone === 'alert'}
             zone={device.geofence}
             zoneTone={zone.tone === 'warn' ? 'unknown' : zone.tone}
@@ -93,8 +114,8 @@ export function Dashboard(props: {
           <span className="home__nomap"><Icon name="map" size={22} /> No location yet</span>
         )}
         <button className="map-pill" onClick={props.onOpenMap}>
-          <i className={`dot tone-${position && live ? 'ok' : 'unknown'}`} />
-          {position ? locationLabel(device, serverNow) : 'Open map'}
+          <i className={`dot tone-${position && live && !offline ? 'ok' : 'unknown'}`} />
+          {!position ? 'Open map' : offline ? 'Last known location' : locationLabel(device, serverNow)}
           <Icon name="chevron" size={14} />
         </button>
       </div>
@@ -138,7 +159,8 @@ export function Dashboard(props: {
               <button className="fact" onClick={() => setDetail({ kind: 'chip', chip: fact.key })}>
                 <Icon name={fact.icon} size={20} />
                 <span className="fact__label">{fact.label}</span>
-                <span className={`fact__value tone-${fact.tone}`}>{fact.value}</span>
+                {/* While offline these are last known values: grey, not green or red. */}
+                <span className={`fact__value tone-${offline ? 'unknown' : fact.tone}`}>{fact.value}</span>
               </button>
             </li>
           ))}
@@ -170,6 +192,8 @@ export function Dashboard(props: {
             </ol>
           )}
         </section>
+
+        {offline?.server && <p className="home__server">Server: {offline.server}</p>}
       </div>
 
       {detail && openAlert && (

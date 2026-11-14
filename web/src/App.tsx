@@ -1,6 +1,6 @@
 import { Capacitor } from '@capacitor/core';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { SafetyEvent } from '@helmetto/shared';
+import type { DeviceState, SafetyEvent } from '@helmetto/shared';
 import { API_BASE } from './api';
 import { DemoPanel } from './DemoPanel';
 import { Icon, type IconName } from './icons';
@@ -39,6 +39,23 @@ function readStored(key: string): string | null {
   }
 }
 
+/** Stands in for the scooter when the server has never answered on this phone. */
+function offlinePlaceholder(now: number): DeviceState {
+  return {
+    device_id: 'offline',
+    name: 'Your scooter',
+    child_name: null,
+    online: false,
+    last_seen_at: null,
+    telemetry: null,
+    last_location: null,
+    active_alerts: [],
+    geofence: null,
+    zone_status: 'unknown',
+    server_time: new Date(now).toISOString(),
+  };
+}
+
 export function App() {
   const [tab, setTab] = useState<Tab>(() => {
     const hash = location.hash.slice(1);
@@ -68,7 +85,11 @@ export function App() {
 
   const now = useNow();
   const serverNow = now + live.clockOffsetMs;
-  const device = live.devices.find((d) => d.device_id === selectedId) ?? live.devices[0] ?? null;
+  const down = live.connection === 'down';
+  // Never reached the server and nothing saved on this phone: show the usual
+  // screens with a placeholder scooter instead of an empty error page.
+  const placeholder = !live.loaded && live.devices.length === 0 && down ? offlinePlaceholder(now) : null;
+  const device = live.devices.find((d) => d.device_id === selectedId) ?? live.devices[0] ?? placeholder;
   const events = device ? (live.alerts[device.device_id] ?? []) : [];
   const active = device ? visibleAlerts(device) : [];
   current.current = {
@@ -111,7 +132,6 @@ export function App() {
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
-  const down = live.connection === 'down';
   // Home shows alerts in the hero and Alerts lists them; other tabs get one slim strip.
   const strip = device && !down && (tab === 'map' || tab === 'devices') ? active[0] : undefined;
 
@@ -136,7 +156,7 @@ export function App() {
         </span>
       </header>
 
-      {down && (
+      {down && tab !== 'home' && (
         <div className="strip tone-warn" role="status">
           <Icon name="signalOff" size={18} />
           <strong>Can't reach Helmetto</strong>
@@ -153,22 +173,8 @@ export function App() {
       )}
 
       <main className="content">
-        {!live.loaded ? (
-          <div className="blank">
-            {down ? (
-              <>
-                <Icon name="signalOff" size={28} />
-                <strong>Can't load your scooters</strong>
-                <span>Trying again…</span>
-                {/* In the iOS app the server is set at build time; show it so a wrong one is easy to spot. */}
-                {Capacitor.isNativePlatform() && (
-                  <small className="blank__server">Server: {API_BASE || 'not set (rebuild with VITE_API_URL)'}</small>
-                )}
-              </>
-            ) : (
-              <div className="spinner" aria-label="Loading" />
-            )}
-          </div>
+        {!live.loaded && !device ? (
+          <div className="blank"><div className="spinner" aria-label="Loading" /></div>
         ) : !device ? (
           <div className="blank">
             <Icon name="scooter" size={28} />
@@ -184,6 +190,7 @@ export function App() {
             onOpenAlerts={() => go('alerts')}
             onAcknowledged={live.applyEvent}
             onSaved={live.applyState}
+            offline={down ? { since: live.cachedAt, server: Capacitor.isNativePlatform() ? API_BASE || 'not set (rebuild with VITE_API_URL)' : null } : null}
           />
         ) : tab === 'map' ? (
           <MapPage key={device.device_id} device={device} serverNow={serverNow} onSaved={live.applyState} />

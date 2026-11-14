@@ -85,8 +85,8 @@ export function hero(device: DeviceState, serverNow: number): Hero {
     return {
       tone: 'unknown',
       icon: 'clock',
-      title: 'Waiting for scooter',
-      line: 'No data yet',
+      title: 'Scooter not connected',
+      line: 'Switch it on near Wi-Fi. It connects by itself.',
       alert: null,
       help: 'This scooter has not sent any data yet. Switch it on within WiFi range to start monitoring.',
     };

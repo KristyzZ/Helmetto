@@ -21,17 +21,53 @@ export interface Live {
   applyState: (state: DeviceState) => void;
   /** Apply a changed event (e.g. acknowledged) without waiting for the stream. */
   applyEvent: (event: SafetyEvent) => void;
+  /**
+   * When the devices and alerts on screen were saved, if they come from this
+   * phone's copy because the server hasn't answered yet; null once it has.
+   */
+  cachedAt: string | null;
+}
+
+const CACHE_KEY = 'helmetto.cache.v1';
+interface Cache {
+  devices: DeviceState[];
+  alerts: Record<string, SafetyEvent[]>;
+  savedAt: string;
+}
+
+/** The last status this phone received, so the app can show it while offline. */
+function readCache(): Cache | null {
+  try {
+    const cache = JSON.parse(localStorage.getItem(CACHE_KEY) ?? 'null') as Cache | null;
+    return cache && Array.isArray(cache.devices) ? cache : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCache(devices: DeviceState[], alerts: Record<string, SafetyEvent[]>) {
+  try {
+    const trimmed = Object.fromEntries(Object.entries(alerts).map(([id, list]) => [id, list.slice(0, 50)]));
+    localStorage.setItem(CACHE_KEY, JSON.stringify({ devices, alerts: trimmed, savedAt: new Date().toISOString() } satisfies Cache));
+  } catch {
+    // storage full or blocked: the app still works, just without an offline copy
+  }
 }
 
 const POLL_FAST_MS = 4_000; // while the stream is down
 const POLL_SAFETY_MS = 20_000; // belt and braces while the stream is up
+const STREAM_RETRY_MS = 5_000; // reopen the live stream after the browser gave up on it
 
 /** Keeps device state and alert history in sync: SSE first, polling as fallback. */
 export function useLive(onNewEvent: (event: SafetyEvent) => void): Live {
+  const [cache] = useState(readCache);
   const [loaded, setLoaded] = useState(false);
   const [connection, setConnection] = useState<Connection>('connecting');
-  const [devices, setDevices] = useState<DeviceState[]>([]);
-  const [alerts, setAlerts] = useState<Record<string, SafetyEvent[]>>({});
+  const [devices, setDevices] = useState<DeviceState[]>(cache?.devices ?? []);
+  const [alerts, setAlerts] = useState<Record<string, SafetyEvent[]>>(cache?.alerts ?? {});
+  const [cachedAt, setCachedAt] = useState<string | null>(cache?.savedAt ?? null);
+  /** True until the server answers; then the saved copy is dropped, not merged (the server may have been reset). */
+  const showingCache = useRef(cache !== null);
   const [clockOffsetMs, setClockOffsetMs] = useState(0);
 
   const onNewEventRef = useRef(onNewEvent);
@@ -82,6 +118,11 @@ export function useLive(onNewEvent: (event: SafetyEvent) => void): Live {
     };
 
     const applyDevices = (response: DevicesResponse) => {
+      if (showingCache.current) {
+        showingCache.current = false;
+        setCachedAt(null);
+        setAlerts({});
+      }
       const first = response.devices[0];
       if (first) setClockOffsetMs(Date.parse(first.server_time) - Date.now());
       setDevices(response.devices);
@@ -112,7 +153,8 @@ export function useLive(onNewEvent: (event: SafetyEvent) => void): Live {
     }, POLL_FAST_MS);
 
     let source: EventSource | null = null;
-    if ('EventSource' in window) {
+    let reconnect: ReturnType<typeof setTimeout> | undefined;
+    const connect = () => {
       source = new EventSource(API_BASE + routes.stream());
       source.addEventListener('open', () => {
         streamOpen = true;
@@ -130,12 +172,20 @@ export function useLive(onNewEvent: (event: SafetyEvent) => void): Live {
       });
       source.addEventListener('alert_update', (e) => applyEvent(JSON.parse((e as MessageEvent).data) as SafetyEvent));
       source.addEventListener('error', () => {
-        // EventSource reconnects by itself; polling covers the gap
+        // Polling covers the gap. EventSource retries by itself after a dropped
+        // connection, but gives up for good if the server was unreachable or
+        // answered with an error (e.g. the app started before the server): then
+        // open a new one shortly, or the app would never get back to "Live".
         streamOpen = false;
         setConnection((c) => (c === 'live' || c === 'connecting' ? 'polling' : c));
         void refresh();
+        if (source?.readyState === EventSource.CLOSED && !disposed) {
+          clearTimeout(reconnect);
+          reconnect = setTimeout(() => !disposed && connect(), STREAM_RETRY_MS);
+        }
       });
-    }
+    };
+    if ('EventSource' in window) connect();
 
     const onVisible = () => document.visibilityState === 'visible' && void refresh();
     document.addEventListener('visibilitychange', onVisible);
@@ -143,11 +193,17 @@ export function useLive(onNewEvent: (event: SafetyEvent) => void): Live {
     return () => {
       disposed = true;
       clearInterval(poll);
+      clearTimeout(reconnect);
       source?.close();
       document.removeEventListener('visibilitychange', onVisible);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return { loaded, connection, devices, alerts, clockOffsetMs, applyState, applyEvent };
+  // Keep the offline copy up to date, but only with what the server sent.
+  useEffect(() => {
+    if (loaded) writeCache(devices, alerts);
+  }, [loaded, devices, alerts]);
+
+  return { loaded, connection, devices, alerts, clockOffsetMs, applyState, applyEvent, cachedAt };
 }
