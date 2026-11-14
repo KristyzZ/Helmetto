@@ -5,7 +5,7 @@ import { API_BASE } from './api';
 import { DemoPanel } from './DemoPanel';
 import { Icon, type IconName } from './icons';
 import { useLive } from './live';
-import { showBrowserNotification } from './notify';
+import { useSafetyNotifications } from './safetyNotifications';
 import { Alerts } from './pages/Alerts';
 import { Dashboard } from './pages/Dashboard';
 import { Devices } from './pages/Devices';
@@ -69,7 +69,6 @@ export function App() {
   const current = useRef<{ deviceId: string | null; names: Record<string, string> }>({ deviceId: null, names: {} });
 
   const live = useLive((event) => {
-    if (event.severity === 'alert') void showBrowserNotification(title(event.type), event.message, event.type);
     // The screen already shows this scooter's alerts (hero, alert strip, Alerts tab),
     // so a toast is only for what would otherwise go unseen: recoveries, and
     // alerts about another scooter.
@@ -82,6 +81,9 @@ export function App() {
     clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(null), TOAST_MS);
   });
+
+  // Phone/browser notifications: riding without a helmet, leaving the safe zone, a crash.
+  useSafetyNotifications(live.devices, live.loaded);
 
   const now = useNow();
   const serverNow = now + live.clockOffsetMs;

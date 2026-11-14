@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Capacitor } from '@capacitor/core';
 import type { AlertType, DeviceState, SafetyEvent } from '@helmetto/shared';
 import { Icon } from '../icons';
@@ -9,14 +9,19 @@ import { ALERT_HELP, EVENT_ICON, alertLine, alertTone, title, visibleAlerts } fr
 import { clock, dayLabel, duration } from '../time';
 
 function Notifications() {
-  const [permission, setPermission] = useState<NotifyPermission>(notifyPermission());
+  const [permission, setPermission] = useState<NotifyPermission>('default');
   const [open, setOpen] = useState(false);
+  useEffect(() => {
+    void notifyPermission().then(setPermission);
+  }, []);
   const status = { granted: 'On', denied: 'Blocked', default: 'Off', unsupported: 'Not available' }[permission];
   const help = {
-    granted: 'You get a notification for every new alert while Helmetto is open, even in the background.',
-    denied: 'Notifications are blocked for this site. Allow them in your browser settings, then reload.',
-    default: 'Get a notification for every new alert while Helmetto is open, even in the background.',
-    unsupported: 'This browser cannot show notifications. Alerts still appear in the app.',
+    granted: 'You get a notification when the rider is riding without a helmet, leaves the safe zone, or may have crashed.',
+    denied: Capacitor.isNativePlatform()
+      ? 'Notifications are off for Helmetto. Turn them on in the iPhone Settings app under Notifications, Helmetto.'
+      : 'Notifications are blocked for this site. Allow them in your browser settings, then reload.',
+    default: 'Get a notification when the rider is riding without a helmet, leaves the safe zone, or may have crashed.',
+    unsupported: 'This device cannot show notifications. Alerts still appear in the app.',
   }[permission];
 
   return (
@@ -79,7 +84,7 @@ export function Alerts(props: {
             <span className="row__text"><strong>No active alerts</strong></span>
           </div>
         ) : (
-          <ul className="list">
+          <ul className="list list--active">
             {active.map((type) => (
               <li key={type}>
                 <button className="row" onClick={() => setOpenAlert(type)}>
@@ -97,7 +102,7 @@ export function Alerts(props: {
         )}
       </section>
 
-      {!Capacitor.isNativePlatform() && <Notifications />}
+      <Notifications />
 
       <section>
         <h2 className="label">History</h2>
