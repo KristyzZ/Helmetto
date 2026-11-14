@@ -356,3 +356,22 @@ describe('crash plan: phone number and "I\'m on it"', () => {
     await post(reading());
   });
 });
+
+describe('CORS for the iOS app', () => {
+  it('lets the iOS app call the API, preflight included, and nobody else', async () => {
+    const preflight = await fetch(`${base}/api/alerts/1/ack`, {
+      method: 'OPTIONS',
+      headers: { Origin: 'capacitor://localhost', 'Access-Control-Request-Method': 'POST' },
+    });
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get('access-control-allow-origin')).toBe('capacitor://localhost');
+    expect(preflight.headers.get('access-control-allow-headers')).toBe('Content-Type');
+
+    const app = await fetch(`${base}/api/devices`, { headers: { Origin: 'capacitor://localhost' } });
+    expect(app.headers.get('access-control-allow-origin')).toBe('capacitor://localhost');
+
+    const other = await fetch(`${base}/api/devices`, { headers: { Origin: 'https://example.com' } });
+    expect(other.status).toBe(200);
+    expect(other.headers.get('access-control-allow-origin')).toBeNull();
+  });
+});

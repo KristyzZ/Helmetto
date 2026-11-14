@@ -19,6 +19,9 @@ import { acknowledgeSchema, deviceUpdateSchema, geofenceSchema, telemetrySchema,
 
 const SSE_KEEPALIVE_MS = 15_000;
 
+/** Where the iOS app (Capacitor) loads from; it calls the API from there. */
+export const NATIVE_APP_ORIGINS = ['capacitor://localhost', 'ionic://localhost'];
+
 const fail = (res: Response, status: number, error: string, message: string) =>
   res.status(status).json({ error, message } satisfies ApiError);
 
@@ -36,6 +39,22 @@ export function createApp(deps: {
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', true);
+
+  // CORS for the parent app only: the iOS app and any CORS_ORIGINS. Devices
+  // don't send an Origin, and the device key header is never allowed cross-origin.
+  const allowedOrigins = new Set([...NATIVE_APP_ORIGINS, ...(config.corsOrigins ?? [])]);
+  app.use((req, res, next) => {
+    const origin = req.get('Origin');
+    if (!origin || !allowedOrigins.has(origin)) return next();
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+    if (req.method !== 'OPTIONS') return next();
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Max-Age', '600');
+    res.status(204).end();
+  });
+
   app.use(express.json({ limit: '8kb' }));
 
   app.get(ROUTE_PATTERNS.health, (_req, res) => {

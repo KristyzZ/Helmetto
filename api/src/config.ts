@@ -12,6 +12,8 @@ export interface Config {
   demoMode: boolean;
   offlineTimeoutMs: number;
   webDist: string;
+  /** Extra web origins allowed to call the API from another address (CORS_ORIGINS, comma-separated). */
+  corsOrigins?: string[];
 }
 
 /** Dev-only fallbacks so `npm run dev` works without a .env. Never used in production. */
@@ -47,5 +49,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     demoMode: env.DEMO_MODE ? env.DEMO_MODE === 'true' : !production,
     offlineTimeoutMs: Number(env.OFFLINE_TIMEOUT_MS) || OFFLINE_TIMEOUT_MS,
     webDist: path.join(REPO_ROOT, 'web', 'dist'),
+    corsOrigins: (env.CORS_ORIGINS ?? '')
+      .split(',')
+      .map((origin) => origin.trim().replace(/\/+$/, ''))
+      .filter(Boolean),
   };
 }
