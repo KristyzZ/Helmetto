@@ -66,7 +66,7 @@ export function Devices(props: {
           const state = !hasReported(device)
             ? 'Never connected'
             : !device.online
-              ? `Offline · seen ${ago(device.last_seen_at, props.serverNow)}`
+              ? `Offline, seen ${ago(device.last_seen_at, props.serverNow)}`
               : alerts.length
                 ? `${alerts.length} active alert${alerts.length > 1 ? 's' : ''}`
                 : 'Online';

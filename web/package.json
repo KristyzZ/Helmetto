@@ -9,6 +9,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@fontsource-variable/lexend": "^5.3.0",
+    "@fontsource/bagel-fat-one": "^5.3.0",
     "@helmetto/ai": "*",
     "@helmetto/shared": "*",
     "leaflet": "^1.9.4",

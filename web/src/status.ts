@@ -108,11 +108,10 @@ export function hero(device: DeviceState, serverNow: number): Hero {
   const t = device.telemetry;
   const riding = (t?.speed_kmh ?? 0) > 1;
   const worn = t?.helmet_worn === true;
+  // The child's name is already on the sticker, so the line doesn't repeat it.
   const line = riding
-    ? `${name ?? 'Rider'} is riding${worn ? ' with helmet on' : ', helmet connected'}`
-    : name
-      ? `${name}'s helmet is ${worn ? 'on' : 'connected'}`
-      : `Helmet ${worn ? 'on' : 'connected'}`;
+    ? worn ? 'Riding with the helmet on.' : 'Riding. The scooter can hear the helmet.'
+    : worn ? 'Helmet on. Not riding right now.' : 'Not riding right now. Helmet is nearby.';
   return {
     tone: 'ok',
     icon: 'check',

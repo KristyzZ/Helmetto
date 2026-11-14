@@ -1,6 +1,8 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import 'leaflet/dist/leaflet.css';
+import '@fontsource/bagel-fat-one';
+import '@fontsource-variable/lexend';
 import './styles.css';
 import { App } from './App';
 

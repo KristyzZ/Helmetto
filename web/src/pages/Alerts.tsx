@@ -117,7 +117,7 @@ export function Alerts(props: { device: DeviceState; events: SafetyEvent[]; serv
       {openAlert && (
         <Sheet title={title(openAlert)} icon={EVENT_ICON[openAlert]} tone={alertTone(openAlert)} onClose={() => setOpenAlert(null)}>
           <p>{ALERT_HELP[openAlert]}</p>
-          {since(openAlert) && <p className="meta">Since {clock(since(openAlert)!)} · {duration(since(openAlert), serverNow)}</p>}
+          {since(openAlert) && <p className="meta">Since {clock(since(openAlert)!)}, {duration(since(openAlert), serverNow)} ago</p>}
           <div className="sheet__actions">
             <button className="button button--primary" onClick={props.onOpenMap}>Show on map</button>
           </div>

@@ -123,7 +123,7 @@ export function App() {
             ))}
           </select>
         ) : (
-          <span className="topbar__name">{device ? displayName(device) : 'Helmetto'}</span>
+          <span className="topbar__name">Helmetto</span>
         )}
         <span className="state topbar__link" title={`Server connection: ${live.connection}`}>
           <i className={`dot tone-${live.connection === 'live' ? 'ok' : down ? 'alert' : 'warn'} ${live.connection === 'live' ? 'dot--pulse' : ''}`} />
