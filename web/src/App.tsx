@@ -1,5 +1,7 @@
+import { Capacitor } from '@capacitor/core';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { SafetyEvent } from '@helmetto/shared';
+import { API_BASE } from './api';
 import { DemoPanel } from './DemoPanel';
 import { Icon, type IconName } from './icons';
 import { useLive } from './live';
@@ -154,7 +156,15 @@ export function App() {
         {!live.loaded ? (
           <div className="blank">
             {down ? (
-              <><Icon name="signalOff" size={28} /><strong>Can't load your scooters</strong><span>Trying again…</span></>
+              <>
+                <Icon name="signalOff" size={28} />
+                <strong>Can't load your scooters</strong>
+                <span>Trying again…</span>
+                {/* In the iOS app the server is set at build time; show it so a wrong one is easy to spot. */}
+                {Capacitor.isNativePlatform() && (
+                  <small className="blank__server">Server: {API_BASE || 'not set (rebuild with VITE_API_URL)'}</small>
+                )}
+              </>
             ) : (
               <div className="spinner" aria-label="Loading" />
             )}
