@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { NO_CONDITIONS, type Conditions } from '@helmetto/ai';
-import type { Geofence, LastLocation, SafetyEvent, Telemetry } from '@helmetto/shared';
+import type { Geofence, LastLocation, Place, PlaceInput, SafetyEvent, Telemetry } from '@helmetto/shared';
 
 export const DEMO_PARENT_ID = 'parent-demo';
 
@@ -39,6 +39,16 @@ CREATE TABLE IF NOT EXISTS events (
   longitude REAL
 );
 CREATE INDEX IF NOT EXISTS events_by_device ON events(device_id, id DESC);
+CREATE TABLE IF NOT EXISTS places (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  device_id TEXT NOT NULL REFERENCES devices(id),
+  name TEXT NOT NULL,
+  latitude REAL NOT NULL,
+  longitude REAL NOT NULL,
+  radius_m REAL NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS places_by_device ON places(device_id, id);
 `;
 
 /** Columns added after the first release; applied to existing databases on start. */
@@ -46,10 +56,12 @@ const ADDED_COLUMNS: Record<string, string> = {
   child_name: 'TEXT',
   geofence_points: 'TEXT', // JSON [{lat, lon}], set for polygon zones only
   child_phone: 'TEXT',
+  at_place_id: 'INTEGER', // the place the scooter was last seen at; no foreign key, places can be deleted
 };
 const ADDED_EVENT_COLUMNS: Record<string, string> = {
   acknowledged_at: 'INTEGER',
   acknowledged_by: 'TEXT',
+  place_name: 'TEXT',
 };
 
 export const hashKey = (key: string) => createHash('sha256').update(key).digest('hex');
@@ -66,6 +78,8 @@ export interface DeviceRow {
   conditions: Conditions;
   lastLocation: (Omit<LastLocation, 'at'> & { at: number }) | null;
   geofence: Geofence | null;
+  /** The place the scooter was last seen at; null = none. */
+  atPlaceId: number | null;
 }
 
 type Raw = Record<string, any>;
@@ -95,6 +109,7 @@ function toDevice(raw: Raw): DeviceRow {
               : { shape: 'circle' as const }),
           }
         : null,
+    atPlaceId: raw.at_place_id ?? null,
   };
 }
 
@@ -110,8 +125,17 @@ function toEvent(raw: Raw): SafetyEvent {
     longitude: raw.longitude ?? null,
     acknowledged_at: raw.acknowledged_at != null ? new Date(raw.acknowledged_at).toISOString() : null,
     acknowledged_by: raw.acknowledged_by ?? null,
+    ...(raw.place_name != null ? { place_name: raw.place_name } : {}),
   };
 }
+
+const toPlace = (raw: Raw): Place => ({
+  id: raw.id,
+  name: raw.name,
+  latitude: raw.latitude,
+  longitude: raw.longitude,
+  radius_m: raw.radius_m,
+});
 
 export class Store {
   private db: DatabaseSync;
@@ -178,7 +202,7 @@ export class Store {
       .prepare(
         `UPDATE devices SET name = ?, child_name = ?, child_phone = ?, last_seen_at = ?, telemetry = ?, conditions = ?,
            last_lat = ?, last_lon = ?, last_location_at = ?,
-           geofence_lat = ?, geofence_lon = ?, geofence_radius_m = ?, geofence_points = ?
+           geofence_lat = ?, geofence_lon = ?, geofence_radius_m = ?, geofence_points = ?, at_place_id = ?
          WHERE id = ?`,
       )
       .run(
@@ -195,6 +219,7 @@ export class Store {
         device.geofence?.longitude ?? null,
         device.geofence?.radius_m ?? null,
         device.geofence?.shape === 'polygon' ? JSON.stringify(device.geofence.points) : null,
+        device.atPlaceId,
         device.id,
       );
   }
@@ -202,8 +227,8 @@ export class Store {
   addEvent(event: Omit<SafetyEvent, 'id' | 'created_at'> & { created_at: number }): SafetyEvent {
     const result = this.db
       .prepare(
-        `INSERT INTO events (device_id, type, severity, message, created_at, latitude, longitude)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO events (device_id, type, severity, message, created_at, latitude, longitude, place_name)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         event.device_id,
@@ -213,6 +238,7 @@ export class Store {
         event.created_at,
         event.latitude,
         event.longitude,
+        event.place_name ?? null,
       );
     return {
       ...event,
@@ -242,6 +268,24 @@ export class Store {
       .prepare('SELECT * FROM events WHERE device_id = ? AND id < ? ORDER BY id DESC LIMIT ?')
       .all(deviceId, beforeId ?? Number.MAX_SAFE_INTEGER, limit);
     return (rows as Raw[]).map(toEvent);
+  }
+
+  listPlaces(deviceId: string): Place[] {
+    const rows = this.db.prepare('SELECT * FROM places WHERE device_id = ? ORDER BY id').all(deviceId);
+    return (rows as Raw[]).map(toPlace);
+  }
+
+  addPlace(deviceId: string, place: PlaceInput, at: number): Place {
+    const result = this.db
+      .prepare('INSERT INTO places (device_id, name, latitude, longitude, radius_m, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(deviceId, place.name, place.latitude, place.longitude, place.radius_m, at);
+    return { id: Number(result.lastInsertRowid), ...place };
+  }
+
+  /** false = no such place on this device. */
+  deletePlace(deviceId: string, placeId: number): boolean {
+    const result = this.db.prepare('DELETE FROM places WHERE id = ? AND device_id = ?').run(placeId, deviceId);
+    return Number(result.changes) > 0;
   }
 
   transaction<T>(fn: () => T): T {

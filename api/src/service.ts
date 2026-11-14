@@ -6,13 +6,17 @@ import {
   evaluateHeartbeat,
   evaluateTelemetry,
   isValidCoordinate,
+  placeAt,
   type Evaluation,
 } from '@helmetto/ai';
 import {
   EVENT_INFO,
+  PLACES_MAX,
   type DeviceState,
   type DeviceUpdate,
   type Geofence,
+  type Place,
+  type PlaceInput,
   type SafetyEvent,
   type SafetyEventType,
   type Telemetry,
@@ -20,7 +24,7 @@ import {
 import type { DeviceRow, Store } from './db';
 
 /** One short line per event. `who` is the child's name, or the scooter's when no child name is set. */
-const MESSAGES: Record<SafetyEventType, (who: string) => string> = {
+const MESSAGES: Record<Exclude<SafetyEventType, 'place_arrived'>, (who: string) => string> = {
   helmet_disconnected: (w) => `${w}'s helmet is out of range or switched off.`,
   helmet_reconnected: (w) => `${w}'s helmet is connected again.`,
   helmet_not_worn: (w) => `${w}'s helmet is nearby but not being worn.`,
@@ -66,6 +70,8 @@ export class SafetyService extends EventEmitter {
       active_alerts: activeAlerts(device.conditions),
       geofence: device.geofence,
       zone_status: checkGeofence(device.geofence, t?.latitude, t?.longitude),
+      places: this.store.listPlaces(device.id),
+      at_place_id: device.atPlaceId,
       server_time: new Date(this.now()).toISOString(),
     };
   }
@@ -79,22 +85,38 @@ export class SafetyService extends EventEmitter {
     return device ? this.toState(device) : null;
   }
 
-  /** Persist the evaluation, log its events, then notify listeners. */
-  private commit(device: DeviceRow, evaluation: Evaluation, at: number): SafetyEvent[] {
+  /** Persist the evaluation, log its events (and an arrival, if any), then notify listeners. */
+  private commit(device: DeviceRow, evaluation: Evaluation, at: number, arrivedAt: Place | null = null): SafetyEvent[] {
     device.conditions = evaluation.conditions;
+    const who = device.childName ?? device.name;
+    const where = {
+      device_id: device.id,
+      created_at: at,
+      latitude: device.lastLocation?.latitude ?? null,
+      longitude: device.lastLocation?.longitude ?? null,
+    };
     const events = this.store.transaction(() => {
       this.store.saveDevice(device);
-      return evaluation.events.map((type) =>
+      const logged = evaluation.events.map((type) =>
         this.store.addEvent({
-          device_id: device.id,
-          type,
+          ...where,
+          type: type as Exclude<SafetyEventType, 'place_arrived'>,
           severity: EVENT_INFO[type].severity,
-          message: MESSAGES[type](device.childName ?? device.name),
-          created_at: at,
-          latitude: device.lastLocation?.latitude ?? null,
-          longitude: device.lastLocation?.longitude ?? null,
+          message: MESSAGES[type as Exclude<SafetyEventType, 'place_arrived'>](who),
         }),
       );
+      if (arrivedAt) {
+        logged.push(
+          this.store.addEvent({
+            ...where,
+            type: 'place_arrived',
+            severity: EVENT_INFO.place_arrived.severity,
+            message: `${who} arrived at ${arrivedAt.name}.`,
+            place_name: arrivedAt.name,
+          }),
+        );
+      }
+      return logged;
     });
     this.emit('state', this.toState(device));
     for (const event of events) this.emit('alert', event);
@@ -111,10 +133,56 @@ export class SafetyService extends EventEmitter {
     const telemetry: Telemetry = hasGps ? input : { ...input, latitude: null, longitude: null };
 
     const evaluation = evaluateTelemetry(device.conditions, telemetry, device.geofence);
+
+    // Arrival: GPS puts the scooter at a marked place it wasn't at before. The
+    // very first position ever is only a starting point, not an arrival.
+    let arrivedAt: Place | null = null;
+    if (hasGps) {
+      const places = this.store.listPlaces(device.id);
+      const next = placeAt(places, telemetry.latitude, telemetry.longitude, device.atPlaceId);
+      if (next !== null && next !== device.atPlaceId && device.lastLocation) {
+        arrivedAt = places.find((p) => p.id === next) ?? null;
+      }
+      device.atPlaceId = next;
+    }
+
     device.telemetry = telemetry;
     device.lastSeenAt = at;
     if (hasGps) device.lastLocation = { latitude: telemetry.latitude!, longitude: telemetry.longitude!, at };
-    return this.commit(device, evaluation, at);
+    return this.commit(device, evaluation, at, arrivedAt);
+  }
+
+  /**
+   * Mark a place. If the scooter is already there, that's where it is, quietly:
+   * arriving needs riding in.
+   */
+  addPlace(deviceId: string, input: PlaceInput): DeviceState | 'not_found' | 'too_many' {
+    const device = this.store.getDevice(deviceId);
+    if (!device) return 'not_found';
+    if (this.store.listPlaces(deviceId).length >= PLACES_MAX) return 'too_many';
+    this.store.addPlace(deviceId, input, this.now());
+    this.relocate(device);
+    return this.publish(device);
+  }
+
+  deletePlace(deviceId: string, placeId: number): DeviceState | 'not_found' {
+    const device = this.store.getDevice(deviceId);
+    if (!device || !this.store.deletePlace(deviceId, placeId)) return 'not_found';
+    this.relocate(device);
+    return this.publish(device);
+  }
+
+  /** Which place the last known position is at, after the places changed. */
+  private relocate(device: DeviceRow): void {
+    const p = device.lastLocation;
+    device.atPlaceId = p ? placeAt(this.store.listPlaces(device.id), p.latitude, p.longitude, device.atPlaceId) : null;
+    this.store.saveDevice(device);
+  }
+
+  private publish(device: DeviceRow): DeviceState {
+    const state = this.toState(device);
+    this.emit('state', state);
+    return state;
   }
 
   setGeofence(deviceId: string, geofence: Geofence | null): DeviceState | null {

@@ -5,6 +5,7 @@ import { z } from 'zod';
 import {
   DEMO_SCENARIOS,
   DEVICE_KEY_HEADER,
+  PLACES_MAX,
   ROUTE_PATTERNS,
   type AlertsResponse,
   type ApiError,
@@ -15,7 +16,7 @@ import type { Config } from './config';
 import type { Store } from './db';
 import type { DemoRunner } from './demo';
 import type { SafetyService } from './service';
-import { acknowledgeSchema, deviceUpdateSchema, geofenceSchema, telemetrySchema, validationError } from './validation';
+import { acknowledgeSchema, deviceUpdateSchema, geofenceSchema, placeSchema, telemetrySchema, validationError } from './validation';
 
 const SSE_KEEPALIVE_MS = 15_000;
 
@@ -116,6 +117,23 @@ export function createApp(deps: {
     const state = service.setGeofence(String(req.params.deviceId), null);
     if (!state) return fail(res, 404, 'unknown_device', 'No such device');
     res.json(state);
+  });
+
+  // Named places ("School"): arriving there is logged and notified.
+  app.post(ROUTE_PATTERNS.devicePlaces, (req, res) => {
+    const parsed = placeSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json(validationError(parsed.error));
+    const result = service.addPlace(String(req.params.deviceId), parsed.data);
+    if (result === 'not_found') return fail(res, 404, 'unknown_device', 'No such device');
+    if (result === 'too_many') return fail(res, 409, 'too_many_places', `A scooter can have at most ${PLACES_MAX} places`);
+    res.status(201).json(result);
+  });
+
+  app.delete(ROUTE_PATTERNS.devicePlace, (req, res) => {
+    const placeId = Number(req.params.placeId);
+    const result = Number.isInteger(placeId) ? service.deletePlace(String(req.params.deviceId), placeId) : 'not_found';
+    if (result === 'not_found') return fail(res, 404, 'unknown_place', 'No such place');
+    res.json(result);
   });
 
   // A parent pressed "I'm on it" on an alert. Everyone else sees it through the stream.

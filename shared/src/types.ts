@@ -67,8 +67,11 @@ export type RecoveryType =
   | 'geofence_enter'
   | 'scooter_online';
 
-export type SafetyEventType = AlertType | RecoveryType;
-export type Severity = 'alert' | 'recovery';
+/** Logged for good-to-know moments that are not alerts. */
+export type InfoType = 'place_arrived';
+
+export type SafetyEventType = AlertType | RecoveryType | InfoType;
+export type Severity = 'alert' | 'recovery' | 'info';
 
 /** One row of the safety history. Created only on state transitions. */
 export interface SafetyEvent {
@@ -86,6 +89,25 @@ export interface SafetyEvent {
   acknowledged_at?: string | null;
   /** Who pressed it, as they typed their name; null = no name given. */
   acknowledged_by?: string | null;
+  /** place_arrived only: the place's name as it was when the scooter arrived. */
+  place_name?: string | null;
+}
+
+/** A named place a parent marked on the map, e.g. "School". Arriving there is logged. */
+export interface Place {
+  id: number;
+  name: string;
+  latitude: number;
+  longitude: number;
+  radius_m: number;
+}
+
+/** Body of POST /api/devices/:deviceId/places. */
+export interface PlaceInput {
+  name: string;
+  latitude: number;
+  longitude: number;
+  radius_m: number;
 }
 
 export type ZoneStatus = 'inside' | 'outside' | 'unknown';
@@ -122,6 +144,10 @@ export interface DeviceState {
   geofence: Geofence | null;
   /** 'unknown' when there is no geofence or no valid GPS in the latest reading. */
   zone_status: ZoneStatus;
+  /** Places the parents marked; missing on older servers. */
+  places?: Place[];
+  /** The place the scooter was last seen at (by GPS); null = none of them. */
+  at_place_id?: number | null;
   /** ISO 8601 server clock, so clients can show "12 s ago" without clock skew. */
   server_time: string;
 }
@@ -168,7 +194,8 @@ export type DemoScenario =
   | 'helmet-not-worn'
   | 'crash'
   | 'geofence-exit'
-  | 'offline';
+  | 'offline'
+  | 'arrive-place';
 
 export interface DemoStatus {
   /** false = server started without DEMO_MODE; POST is rejected. */

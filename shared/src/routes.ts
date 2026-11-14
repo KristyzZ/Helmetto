@@ -13,6 +13,8 @@ export const ROUTE_PATTERNS = {
   stream: '/api/stream',
   demo: '/api/demo',
   alertAck: '/api/alerts/:eventId/ack',
+  devicePlaces: '/api/devices/:deviceId/places',
+  devicePlace: '/api/devices/:deviceId/places/:placeId',
 } as const;
 
 const id = (deviceId: string) => encodeURIComponent(deviceId);
@@ -29,6 +31,8 @@ export const routes = {
   stream: () => '/api/stream',
   demo: () => '/api/demo',
   alertAck: (eventId: number) => `/api/alerts/${eventId}/ack`,
+  devicePlaces: (deviceId: string) => `/api/devices/${id(deviceId)}/places`,
+  devicePlace: (deviceId: string, placeId: number) => `/api/devices/${id(deviceId)}/places/${placeId}`,
 } as const;
 
 /** Header carrying the per-device API key on telemetry requests. */

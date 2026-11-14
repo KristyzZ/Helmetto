@@ -6,6 +6,8 @@ import {
   type DemoScenario,
   type DeviceState,
   type Geofence,
+  type Place,
+  type PlaceInput,
   type Telemetry,
 } from '@helmetto/shared';
 
@@ -30,6 +32,28 @@ export const DEFAULT_HOME = { latitude: 54.6872, longitude: 25.2797 };
 const DEFAULT_ZONE_RADIUS_M = 250;
 const LOOP_RADIUS_M = 120;
 const METERS_PER_DEG_LAT = 111_320;
+/** "Arrives at a place": the ride starts this far outside the place's edge. */
+const APPROACH_M = 90;
+/** The place the demo adds when the parent has none. */
+const DEMO_PLACE = { name: 'School', radius_m: 50 };
+
+type LatLon = { latitude: number; longitude: number };
+
+/** Move a point by metres north and east (flat earth: fine for a few hundred metres). */
+function offset(p: LatLon, north: number, east: number): LatLon {
+  return {
+    latitude: p.latitude + north / METERS_PER_DEG_LAT,
+    longitude: p.longitude + east / (METERS_PER_DEG_LAT * Math.cos((p.latitude * Math.PI) / 180)),
+  };
+}
+
+/** Metres north and east from a to b. */
+function delta(a: LatLon, b: LatLon): { north: number; east: number } {
+  return {
+    north: (b.latitude - a.latitude) * METERS_PER_DEG_LAT,
+    east: (b.longitude - a.longitude) * METERS_PER_DEG_LAT * Math.cos((a.latitude * Math.PI) / 180),
+  };
+}
 
 /**
  * A fake scooter. It sends real HTTP telemetry to the real endpoint with the
@@ -50,6 +74,8 @@ export class Simulator {
   private loopRadius = LOOP_RADIUS_M;
   private angle = 0; // position on the loop, radians
   private escapeDistance: number | null = null; // meters from center when leaving the zone
+  /** "Arrives at a place": a straight ride from just outside the place to its middle. */
+  private trip: { from: LatLon; to: LatLon; length: number; travelled: number } | null = null;
   private helmetConnected = true;
   private helmetWorn = true;
   private crashTicks = 0;
@@ -86,6 +112,7 @@ export class Simulator {
         this.crashTicks = 0;
         this.stopped = false;
         this.escapeDistance = null;
+        this.trip = null;
         break;
       case 'helmet-disconnect':
         this.helmetConnected = false;
@@ -104,7 +131,16 @@ export class Simulator {
         break;
       case 'geofence-exit':
         this.stopped = false;
+        this.trip = null;
         this.escapeDistance = -1; // placed just inside the edge on the next tick
+        break;
+      case 'arrive-place':
+        this.helmetConnected = true;
+        this.helmetWorn = true;
+        this.crashTicks = 0;
+        this.stopped = false;
+        this.escapeDistance = null;
+        this.trip = null; // planned in syncZone(), once the places are known
         break;
       case 'offline':
         this.log('telemetry paused: the server should report "scooter offline" after 30 s');
@@ -119,7 +155,8 @@ export class Simulator {
     try {
       const res = await fetch(this.options.baseUrl + routes.deviceState(this.options.deviceId));
       if (!res.ok) return;
-      let geofence: Geofence | null = ((await res.json()) as DeviceState).geofence;
+      const state = (await res.json()) as DeviceState;
+      let geofence: Geofence | null = state.geofence;
       if (!geofence && this.scenario === 'geofence-exit') {
         geofence = { ...this.center, radius_m: DEFAULT_ZONE_RADIUS_M };
         await fetch(this.options.baseUrl + routes.deviceGeofence(this.options.deviceId), {
@@ -130,9 +167,41 @@ export class Simulator {
         this.log(`no safe zone set: created one (${DEFAULT_ZONE_RADIUS_M} m)`);
       }
       this.useZone(geofence);
+      if (this.scenario === 'arrive-place') await this.planTrip(state.places ?? []);
     } catch {
       // server not reachable yet: tick() reports it
     }
+  }
+
+  /**
+   * Ride to the parent's first place and park there. With no places, mark
+   * "School" a short ride away, inside the safe zone when there is one.
+   */
+  private async planTrip(places: Place[]): Promise<void> {
+    let place: PlaceInput | undefined = places[0];
+    if (!place) {
+      const spot =
+        [180, 140, 100, 70]
+          .map((d) => offset(this.center, d * 0.5, d * 0.87))
+          .find((p) => !this.zone || (zoneDepthMeters(this.zone, { lat: p.latitude, lon: p.longitude }) ?? -1) >= DEMO_PLACE.radius_m) ??
+        offset(this.center, 50, 87);
+      place = { ...DEMO_PLACE, ...spot };
+      const res = await fetch(this.options.baseUrl + routes.devicePlaces(this.options.deviceId), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(place),
+      });
+      if (!res.ok) return this.log(`couldn't add a place (${res.status})`);
+      this.log(`no places yet: added "${place.name}"`);
+    }
+    // Start just outside the place, on the side facing the usual ride area.
+    const to = { latitude: place.latitude, longitude: place.longitude };
+    const { north, east } = delta(to, this.center);
+    const away = Math.hypot(north, east);
+    const length = place.radius_m + APPROACH_M;
+    const from = away > 1 ? offset(to, (north / away) * length, (east / away) * length) : offset(to, -length, 0);
+    this.trip = { from, to, length, travelled: 0 };
+    this.log(`riding to "${place.name}"`);
   }
 
   /** Pick a ride centre and loop size that fit the zone, whatever its shape. */
@@ -207,24 +276,32 @@ export class Simulator {
     const speed = this.stopped ? 0 : Math.round((14 + Math.random() * 6) * 10) / 10;
     const meters = (speed / 3.6) * (this.intervalMs / 1000);
 
-    let distance: number;
-    if (this.escapeDistance !== null) {
+    let point: LatLon;
+    if (this.trip) {
+      // ride straight to the place, then park
+      const trip = this.trip;
+      const { north, east } = delta(trip.from, trip.to);
+      const f = trip.travelled / trip.length;
+      point = offset(trip.from, north * f, east * f);
+      if (trip.travelled >= trip.length) this.stopped = true;
+      else trip.travelled = Math.min(trip.length, trip.travelled + meters);
+    } else if (this.escapeDistance !== null) {
       // ride straight out of the zone
       // first reading just inside the edge, then straight out
       this.escapeDistance =
         this.escapeDistance < 0 ? Math.max(this.distanceToEdge() - 10, 0) : this.escapeDistance + meters;
-      distance = this.escapeDistance;
+      point = this.position(this.escapeDistance);
     } else {
       // loop around the center, well inside the zone
-      distance = this.loopRadius;
-      this.angle = (this.angle + meters / distance) % (2 * Math.PI);
+      this.angle = (this.angle + meters / this.loopRadius) % (2 * Math.PI);
+      point = this.position(this.loopRadius);
     }
 
     this.battery = Math.max(5, this.battery - 0.05);
     return {
       helmet_connected: this.helmetConnected,
       helmet_worn: this.helmetConnected ? this.helmetWorn : null,
-      ...this.position(distance),
+      ...point,
       speed_kmh: speed,
       battery_percent: Math.round(this.battery),
       crash_detected: crashing,

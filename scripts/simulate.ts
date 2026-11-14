@@ -5,7 +5,7 @@
  *   npm run simulate -- --scenario helmet-disconnect
  *   npm run simulate -- --url https://your-app.onrender.com --minimal
  *
- * While it runs, press 1-7 to switch scenario, q to quit.
+ * While it runs, press 1-8 to switch scenario, q to quit.
  * Device id and key come from .env (DEVICE_ID, DEVICE_API_KEY) or the flags below.
  */
 import path from 'node:path';

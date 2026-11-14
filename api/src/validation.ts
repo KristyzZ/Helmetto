@@ -8,6 +8,8 @@ import {
   GEOFENCE_MIN_RADIUS_M,
   NAME_MAX_LENGTH,
   PHONE_MAX_LENGTH,
+  PLACE_MAX_RADIUS_M,
+  PLACE_MIN_RADIUS_M,
   type ApiError,
   type Geofence,
 } from '@helmetto/shared';
@@ -123,3 +125,11 @@ export function validationError(error: z.ZodError): ApiError {
     details,
   };
 }
+
+/** POST places body. */
+export const placeSchema = z.object({
+  name: z.string().trim().min(1, 'must not be empty').max(NAME_MAX_LENGTH),
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  radius_m: z.number().min(PLACE_MIN_RADIUS_M).max(PLACE_MAX_RADIUS_M),
+});

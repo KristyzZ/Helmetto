@@ -375,3 +375,63 @@ describe('CORS for the iOS app', () => {
     expect(other.headers.get('access-control-allow-origin')).toBeNull();
   });
 });
+
+describe('places and arrivals', () => {
+  const SCHOOL = { name: 'School', latitude: 54.7, longitude: 25.3, radius_m: 80 };
+  /** ~111.2 m per 0.001 degree of latitude. */
+  const at = (metersNorth: number) => reading({ latitude: SCHOOL.latitude + metersNorth / 111_195, longitude: SCHOOL.longitude });
+  const placesUrl = () => `${base}/api/devices/test-scooter/places`;
+  const addPlace = (body: unknown, device = 'test-scooter') =>
+    fetch(`${base}/api/devices/${device}/places`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const arrivals = async () =>
+    ((await (await fetch(`${base}/api/devices/test-scooter/alerts`)).json()) as AlertsResponse).alerts.filter((a) => a.type === 'place_arrived');
+
+  it('validates places', async () => {
+    expect((await addPlace({ ...SCHOOL, name: ' ' })).status).toBe(400);
+    expect((await addPlace({ ...SCHOOL, radius_m: 5 })).status).toBe(400);
+    expect((await addPlace({ ...SCHOOL, latitude: 95 })).status).toBe(400);
+    expect((await addPlace(SCHOOL, 'ghost')).status).toBe(404);
+  });
+
+  it('a place added where the scooter already is counts as being there, not as arriving', async () => {
+    await post(at(10));
+    const before = (await arrivals()).length;
+    const res = await addPlace(SCHOOL);
+    expect(res.status).toBe(201);
+    const s = (await res.json()) as DeviceState;
+    expect(s.places).toEqual([{ id: expect.any(Number), ...SCHOOL }]);
+    expect(s.at_place_id).toBe(s.places![0]!.id);
+    expect((await arrivals()).length).toBe(before);
+  });
+
+  it('logs one arrival per trip, not for GPS jitter at the edge', async () => {
+    const before = (await arrivals()).length;
+    await post(at(400)); // rode away
+    expect((await state()).at_place_id).toBeNull();
+    await post(at(200));
+    await post(at(60)); // arrived
+    await post(at(95)); // jitter just past the edge: still there
+    await post(at(40));
+    await post(reading()); // no GPS: still there
+    const list = await arrivals();
+    expect(list.length).toBe(before + 1);
+    expect(list[0]!.place_name).toBe('School');
+    expect(list[0]!.severity).toBe('info');
+    expect(list[0]!.message).toMatch(/ arrived at School\.$/);
+  });
+
+  it('deletes places and limits how many there are', async () => {
+    const s = await state();
+    const id = s.places![0]!.id;
+    const del = await fetch(`${placesUrl()}/${id}`, { method: 'DELETE' });
+    expect(del.status).toBe(200);
+    const after = (await del.json()) as DeviceState;
+    expect(after.places).toEqual([]);
+    expect(after.at_place_id).toBeNull();
+    expect((await fetch(`${placesUrl()}/${id}`, { method: 'DELETE' })).status).toBe(404);
+
+    for (let i = 0; i < 10; i++) expect((await addPlace({ ...SCHOOL, name: `Place ${i}`, latitude: 50 + i })).status).toBe(201);
+    expect((await addPlace(SCHOOL)).status).toBe(409);
+    for (const place of (await state()).places!) await fetch(`${placesUrl()}/${place.id}`, { method: 'DELETE' });
+  });
+});

@@ -242,6 +242,8 @@ All scooters of the parent.
 - `active_alerts` ⊆ `crash_detected`, `helmet_disconnected`, `helmet_not_worn`, `geofence_exit`, `scooter_offline`.
 - `zone_status`: `inside` | `outside` | `unknown` (no zone, or no valid GPS in the latest reading).
 - `last_location` keeps the last valid GPS fix when newer readings have none.
+- `places` lists the places the parents marked (see `POST .../places`); `at_place_id`
+  is the one the last GPS fix is at, or `null`.
 
 ### `GET /api/devices/:deviceId/alerts?limit=100&before=<id>`
 
@@ -276,7 +278,24 @@ Safety history, newest first. `before` pages further back.
 
 `type` is one of the alert types above (`severity: "alert"`) or a recovery
 (`severity: "recovery"`): `helmet_reconnected`, `helmet_worn`, `crash_cleared`,
-`geofence_enter`, `scooter_online`.
+`geofence_enter`, `scooter_online`. Arrivals are `place_arrived` with
+`severity: "info"` and an extra `place_name` ("Emma arrived at School.").
+
+### `POST /api/devices/:deviceId/places`
+
+Mark a named place; arriving there is logged as `place_arrived` and pushed on the
+stream like any event. Body: `{"name":"School","latitude":54.69,"longitude":25.28,"radius_m":80}`
+(name 1–40 characters, radius 30–500 m, at most 10 places per scooter: `409 too_many_places`).
+Returns `201` with the `DeviceState`.
+
+An arrival is logged when a GPS fix lands inside a place the scooter wasn't at
+before. It counts as gone again only 25 m past the edge, so GPS jitter doesn't
+repeat it. The first fix ever, and a place added where the scooter already is,
+are not arrivals.
+
+### `DELETE /api/devices/:deviceId/places/:placeId`
+
+Removes a place; returns the `DeviceState` (`404 unknown_place` if there is none).
 
 ### `PUT /api/devices/:deviceId/geofence`
 
@@ -393,7 +412,8 @@ Only when the server runs with `DEMO_MODE=true` (default in local dev).
   simulator; `{"scenario":"stop"}` stops it.
 
 Scenarios: `normal`, `helmet-disconnect`, `helmet-reconnect`, `helmet-not-worn`,
-`crash`, `geofence-exit`, `offline`.
+`crash`, `geofence-exit`, `offline`, `arrive-place` (rides to the first place and
+parks; adds a "School" place nearby when there is none).
 
 The simulator (also `npm run simulate`) sends real telemetry to
 `POST /api/devices/:deviceId/telemetry` with the device key, so mock data takes

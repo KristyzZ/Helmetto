@@ -24,6 +24,13 @@ export const NAME_MAX_LENGTH = 40;
 /** Longest phone number accepted for a child, as typed (spaces and symbols count). */
 export const PHONE_MAX_LENGTH = 24;
 
+/** Places a parent can mark per scooter, and how big each one can be. */
+export const PLACES_MAX = 10;
+export const PLACE_MIN_RADIUS_M = 30;
+export const PLACE_MAX_RADIUS_M = 500;
+/** Once at a place, the scooter has to be this much further out to count as gone (GPS jitter). */
+export const PLACE_LEAVE_MARGIN_M = 25;
+
 export const ALERT_TYPES: readonly AlertType[] = [
   'crash_detected',
   'helmet_disconnected',
@@ -52,6 +59,7 @@ export const EVENT_INFO: Record<SafetyEventType, { severity: Severity; title: st
   crash_cleared: { severity: 'recovery', title: 'Crash alert cleared' },
   geofence_enter: { severity: 'recovery', title: 'Back in the safe zone' },
   scooter_online: { severity: 'recovery', title: 'Scooter back online' },
+  place_arrived: { severity: 'info', title: 'Arrived' },
 };
 
 export const DEMO_SCENARIOS: readonly { id: DemoScenario; label: string; description: string }[] = [
@@ -62,4 +70,5 @@ export const DEMO_SCENARIOS: readonly { id: DemoScenario; label: string; descrip
   { id: 'crash', label: 'Crash detected', description: 'Accelerometer reports a crash, scooter stops' },
   { id: 'geofence-exit', label: 'Leaves safe zone', description: 'Rides straight out of the safe zone' },
   { id: 'offline', label: 'Scooter goes offline', description: 'Telemetry stops; offline after 30 s' },
+  { id: 'arrive-place', label: 'Arrives at a place', description: 'Rides to your first place and parks; adds "School" if there is none' },
 ];
