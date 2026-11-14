@@ -11,3 +11,6 @@ capacitor-cordova-ios-plugins
 # Generated Config files
 App/App/capacitor.config.json
 App/App/config.xml
+
+# Your own server address for the Helmetto scheme (one line), e.g. https://helmetto.onrender.com
+server.local

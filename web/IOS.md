@@ -12,27 +12,31 @@ scooter chips (ESP8266) ──HTTPS──▶  server on Render  ◀──HTTPS�
 The chips never talk to the app. They post telemetry to the server; the app
 reads from the same server. So the server has to be online first.
 
-## 0. Quick test without deploying (simulator or phone on your Wi-Fi)
+## 0. Everyday testing: just press Run
 
-The app may talk plain http to your own Mac (`NSAllowsLocalNetworking`).
-Terminal 1, start the server on your Mac:
+Pick the **Helmetto** scheme at the top left of Xcode (not "App") and press
+**Run**. Before every build it, by itself:
+
+1. pulls the latest code for this branch (never over your own changes),
+2. runs `npm install` if packages changed,
+3. builds the app for the server and copies it into Xcode,
+4. opens a **Helmetto server** Terminal window if the server isn't running.
+
+The app uses this Mac as its server (`http://<your-mac>.local:3000`), which
+works in the Simulator and on an iPhone on the same Wi-Fi (allow "find devices
+on your local network" when asked). To use another server, e.g. Render, put
+its address on one line in `web/ios/server.local` (not committed).
+
+If something failed you get a macOS notification; the details are in
+`/tmp/helmetto-xcode.log`.
+
+To reset all demo data: close the server window, then
 
 ```bash
-DATABASE_PATH=data/scooter.db npm run dev
+rm -f ~/Helmetto/Helmetto/data/scooter.db* ~/Helmetto/Helmetto/api/data/scooter.db*
 ```
 
-Terminal 2, build the app against it. For the **Simulator** use `localhost`:
-
-```bash
-VITE_API_URL=http://localhost:3000 npm run ios:sync -w web
-```
-
-For a **real iPhone** on the same Wi-Fi, use your Mac's network name
-(`scutil --get LocalHostName` prints it) with `.local`, e.g.
-`VITE_API_URL=http://Your-Mac.local:3000`, and allow "find devices on your
-local network" when the app asks.
-
-Then press **Run** in Xcode again. Tap the logo 5 times → **Normal ride**.
+and press Run again.
 
 ## 1. Put the server online (Render)
 
