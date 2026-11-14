@@ -29,7 +29,7 @@ VITE_API_URL=http://localhost:3000 npm run ios:sync -w web
 
 For a **real iPhone** on the same Wi-Fi, use your Mac's network name
 (`scutil --get LocalHostName` prints it) with `.local`, e.g.
-`VITE_API_URL=http://Kipozas.local:3000`, and allow "find devices on your
+`VITE_API_URL=http://Your-Mac.local:3000`, and allow "find devices on your
 local network" when the app asks.
 
 Then press **Run** in Xcode again. Tap the logo 5 times → **Normal ride**.
