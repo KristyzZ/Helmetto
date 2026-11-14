@@ -12,6 +12,28 @@ scooter chips (ESP8266) ──HTTPS──▶  server on Render  ◀──HTTPS�
 The chips never talk to the app. They post telemetry to the server; the app
 reads from the same server. So the server has to be online first.
 
+## 0. Quick test without deploying (simulator or phone on your Wi-Fi)
+
+The app may talk plain http to your own Mac (`NSAllowsLocalNetworking`).
+Terminal 1, start the server on your Mac:
+
+```bash
+DATABASE_PATH=data/scooter.db npm run dev
+```
+
+Terminal 2, build the app against it. For the **Simulator** use `localhost`:
+
+```bash
+VITE_API_URL=http://localhost:3000 npm run ios:sync -w web
+```
+
+For a **real iPhone** on the same Wi-Fi, use your Mac's network name
+(`scutil --get LocalHostName` prints it) with `.local`, e.g.
+`VITE_API_URL=http://Kipozas.local:3000`, and allow "find devices on your
+local network" when the app asks.
+
+Then press **Run** in Xcode again. Tap the logo 5 times → **Normal ride**.
+
 ## 1. Put the server online (Render)
 
 1. Render dashboard → **New → Blueprint** → pick this repo, branch
