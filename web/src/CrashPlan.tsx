@@ -5,6 +5,7 @@ import { NAME_MAX_LENGTH, type DeviceState, type SafetyEvent } from '@helmetto/s
 import { api } from './api';
 import { Icon } from './icons';
 import { EditSheet } from './pages/Devices';
+import { Sheet } from './Sheet';
 import { childName, location } from './status';
 import { ago, clock } from './time';
 
@@ -114,74 +115,88 @@ export function CrashPlan(props: {
   };
 
   const handled = event?.acknowledged_at;
+  const child = childName(device);
+  const callRow = phone ? (
+    <a className="plan__row plan__row--call" href={`tel:${phone.replace(/[^\d+]/g, '')}`}>
+      <Icon name="phone" size={20} />
+      <span className="plan__row-text">
+        <strong>Call {child ?? 'the rider'}</strong>
+        <small>{phone}</small>
+      </span>
+      <Icon name="chevron" size={16} />
+    </a>
+  ) : (
+    <button className="plan__row" onClick={() => setSettings(true)}>
+      <Icon name="phone" size={20} />
+      <span className="plan__row-text">
+        <strong>Add {child ? `${child}'s` : "your child's"} number</strong>
+        <small>So you can call from here</small>
+      </span>
+      <Icon name="chevron" size={16} />
+    </button>
+  );
+  const shareRow = (
+    <button className="plan__row" onClick={share}>
+      <Icon name="share" size={20} />
+      <span className="plan__row-text"><strong>Share location</strong></span>
+      <Icon name="chevron" size={16} />
+    </button>
+  );
 
   return (
-    <section className="plan" aria-label="Crash plan">
-      <h2 className="plan__title">
-        {device.active_alerts.includes('crash_detected') || !event
-          ? 'What to do now'
-          : `${childName(device) ?? 'The rider'} may have crashed at ${clock(event.created_at)}`}
-      </h2>
-
-      {phone ? (
-        <a className="plan__call" href={`tel:${phone.replace(/[^\d+]/g, '')}`}>
-          <Icon name="phone" size={24} />
-          <span>
-            <strong>Call {childName(device) ?? 'the rider'}</strong>
-            <small>{phone}</small>
+    <section className={`plan ${handled ? 'plan--handled' : ''}`} aria-label="Crash plan">
+      {handled ? (
+        <div className="plan__done" aria-live="polite">
+          <span className="plan__check"><Icon name="check" size={20} /></span>
+          <span className="plan__row-text">
+            <strong>{event?.acknowledged_by ? `${event.acknowledged_by} is on it` : 'Someone is on it'}</strong>
+            <small>{ago(handled, serverNow)}</small>
           </span>
-        </a>
+        </div>
       ) : (
-        <button className="plan__call plan__call--empty" onClick={() => setSettings(true)}>
-          <Icon name="phone" size={24} />
-          <span>
-            <strong>Add {childName(device) ? `${childName(device)}'s` : "your child's"} number</strong>
-            <small>So you can call from here next time</small>
-          </span>
-        </button>
+        <h2 className="plan__head">
+          <Icon name="alert" size={18} />
+          {device.active_alerts.includes('crash_detected') || !event
+            ? 'What to do now'
+            : `${child ?? 'The rider'} may have crashed at ${clock(event.created_at)}`}
+        </h2>
       )}
 
-      <div className="plan__actions">
-        <button className="button" onClick={share}>
-          <Icon name="share" size={18} /> Share location
-        </button>
-        {!handled && (
-          <button className="button button--primary" disabled={busy || !event} onClick={acknowledge}>
-            <Icon name="check" size={18} /> {busy ? 'Saving…' : "I'm on it"}
-          </button>
-        )}
+      <div className="plan__rows">
+        {callRow}
+        {shareRow}
       </div>
 
-      {asking && !handled && (
-        <form
-          className="plan__who"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void acknowledge();
-          }}
-        >
-          <label className="field">
-            <span>Your name, so the others know who's on it</span>
-            <input value={parent} maxLength={NAME_MAX_LENGTH} placeholder="e.g. Mum" autoFocus onChange={(e) => setParent(e.target.value)} />
-          </label>
-          <button className="button button--primary" type="submit" disabled={busy}>
-            {parent.trim() ? `I'm on it as ${parent.trim()}` : "I'm on it"}
+      {!handled && (
+        <>
+          <button className="plan__onit" disabled={busy || !event} onClick={acknowledge}>
+            {busy ? 'Saving…' : "I'm on it"}
           </button>
-        </form>
+          <p className="plan__status">Nobody has said they're on it yet.</p>
+        </>
       )}
-
-      <p className={`plan__status ${handled ? 'plan__status--done' : ''}`} aria-live="polite">
-        {handled ? (
-          <>
-            <Icon name="check" size={16} />
-            {event?.acknowledged_by ? `${event.acknowledged_by} is on it` : 'Someone is on it'} ({ago(handled, serverNow)})
-          </>
-        ) : (
-          "Nobody has said they're on it yet."
-        )}
-      </p>
       {note && <p className="meta">{note}</p>}
 
+      {asking && !handled && (
+        <Sheet title="Who's handling this?" icon="check" onClose={() => setAsking(false)}>
+          <p>Tell the others you're on it, so nobody calls twice.</p>
+          <form
+            className="plan__who"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void acknowledge();
+            }}
+          >
+            <label className="field">
+              <span>Your name</span>
+              <input value={parent} maxLength={NAME_MAX_LENGTH} placeholder="e.g. Mum" autoFocus onChange={(e) => setParent(e.target.value)} />
+            </label>
+            <button className="button button--primary" type="submit" disabled={busy}>
+              {parent.trim() ? `I'm on it as ${parent.trim()}` : "I'm on it"}
+            </button>
+          </form>
+        </Sheet>
+      )}
       {settings && <EditSheet device={device} focusPhone onClose={() => setSettings(false)} onSaved={props.onSaved} />}
     </section>
   );

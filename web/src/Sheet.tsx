@@ -1,4 +1,5 @@
 import { useEffect, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { Icon, type IconName } from './icons';
 import type { Tone } from './status';
 
@@ -17,7 +18,9 @@ export function Sheet(props: {
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  return (
+  // Rendered at the top of the page: inside an animated parent (e.g. the crash plan)
+  // a sheet would be trapped in that parent's layer, under the tab bar.
+  return createPortal(
     <div className="overlay" onClick={onClose}>
       <div className="sheet" role="dialog" aria-modal="true" aria-label={props.title} onClick={(e) => e.stopPropagation()}>
         <div className="sheet__head">
@@ -33,6 +36,7 @@ export function Sheet(props: {
         </div>
         {props.children}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

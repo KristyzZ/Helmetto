@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { AlertType, DeviceState, SafetyEvent } from '@helmetto/shared';
 import { Icon } from '../icons';
 import { CrashPlan, crashToHandle } from '../CrashPlan';
+import { NotifyPrompt } from '../NotifyPrompt';
 import { MapView } from '../MapView';
 import { Sheet } from '../Sheet';
 import {
@@ -97,6 +98,40 @@ export function Dashboard(props: {
   const openChip = detail?.kind === 'chip' ? facts.find((c) => c.key === detail.chip) : undefined;
   const openAlert = detail?.kind === 'alert' ? detail.type : detail?.kind === 'hero' ? summary.alert : null;
 
+  if (!hasReported(device)) {
+    return (
+      <div className="home home--empty">
+        <div className="empty-state">
+          <span className="empty-state__icon"><Icon name={neverConnected ? 'signalOff' : 'scooter'} size={40} /></span>
+          <h2>{summary.title}</h2>
+          <p>{neverConnected ? summary.line : `Switch ${childName(device) ? `${childName(device)}'s` : 'the'} scooter on near Wi-Fi to see where it is and whether the helmet is on.`}</p>
+          <button className="button button--primary" onClick={() => setDetail({ kind: 'hero' })}>
+            {neverConnected ? 'What to check' : 'How to connect'}
+          </button>
+          {offline?.server && <p className="home__server">Server: {offline.server}</p>}
+        </div>
+        {detail?.kind === 'hero' && (
+          <Sheet title={neverConnected ? 'What to check' : 'How to connect'} icon={summary.icon} tone={summary.tone} onClose={() => setDetail(null)}>
+            {neverConnected ? (
+              <ol className="steps">
+                <li>Check that this phone has internet.</li>
+                <li>For a test server on a Mac: the Mac and this phone are on the same Wi-Fi, and the server window is open.</li>
+                <li>Helmetto keeps trying by itself; this screen updates as soon as it connects.</li>
+              </ol>
+            ) : (
+              <ol className="steps">
+                <li>Switch the scooter on.</li>
+                <li>Keep it near the Wi-Fi it was set up with.</li>
+                <li>Put the helmet on: the scooter finds it by itself.</li>
+                <li>Within a minute this screen shows the map and the helmet status.</li>
+              </ol>
+            )}
+          </Sheet>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="home">
       <div className="home__map" onClick={props.onOpenMap}>
@@ -113,17 +148,18 @@ export function Dashboard(props: {
         ) : (
           <span className="home__nomap"><Icon name="map" size={22} /> No location yet</span>
         )}
-        <button className="map-pill" onClick={props.onOpenMap}>
+        <button className={`map-pill ${position && live && !offline ? 'map-pill--live' : ''}`} onClick={props.onOpenMap}>
           <i className={`dot tone-${position && live && !offline ? 'ok' : 'unknown'}`} />
           {!position ? 'Open map' : offline ? 'Last known location' : locationLabel(device, serverNow)}
           <Icon name="chevron" size={14} />
         </button>
       </div>
 
-      <button className={`sticker sticker--${summary.tone}`} onClick={() => setDetail({ kind: 'hero' })} aria-live="polite">
+      {/* keyed by status: a new status sticks the sticker on again (see .sticker animation) */}
+      <button key={`${summary.tone}:${summary.title}`} className={`sticker sticker--${summary.tone}`} onClick={() => setDetail({ kind: 'hero' })} aria-live="polite">
         <span className="sticker__name">{name}</span>
         <span className="sticker__status">
-          <Icon name={summary.icon} size={20} />
+          <span className="sticker__icon"><Icon name={summary.icon} size={16} /></span>
           {summary.title}
         </span>
         <span className="sticker__line">{summary.line}</span>
@@ -153,14 +189,18 @@ export function Dashboard(props: {
           </ul>
         )}
 
+        <NotifyPrompt name={childName(device) ?? 'the rider'} />
+
         <ul className="facts" aria-label="Right now">
           {facts.map((fact) => (
             <li key={fact.key}>
               <button className="fact" onClick={() => setDetail({ kind: 'chip', chip: fact.key })}>
                 <Icon name={fact.icon} size={20} />
                 <span className="fact__label">{fact.label}</span>
-                {/* While offline these are last known values: grey, not green or red. */}
-                <span className={`fact__value tone-${offline ? 'unknown' : fact.tone}`}>{fact.value}</span>
+                {/* While the app can't reach Helmetto nothing here is current. */}
+                <span className={`fact__value tone-${offline ? 'unknown' : fact.tone}`}>
+                  {offline ? (fact.key === 'scooter' ? 'No connection' : fact.key === 'helmet' ? 'Unknown' : '–') : fact.value}
+                </span>
               </button>
             </li>
           ))}
@@ -168,7 +208,7 @@ export function Dashboard(props: {
             <button className="fact" onClick={props.onOpenMap}>
               <Icon name="zone" size={20} />
               <span className="fact__label">Safe zone</span>
-              <span className={`fact__value tone-${zone.tone}`}>{ZONE_VALUE[zone.text] ?? zone.text}</span>
+              <span className={`fact__value tone-${offline ? 'unknown' : zone.tone}`}>{offline ? '–' : (ZONE_VALUE[zone.text] ?? zone.text)}</span>
             </button>
           </li>
         </ul>

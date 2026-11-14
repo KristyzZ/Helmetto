@@ -111,11 +111,12 @@ export function MapView(props: MapViewProps) {
       marker.current = null;
       return;
     }
+    // A map marker; its tip sits on the position, with a pulse ring there while live.
     const icon = L.divIcon({
       className: '',
-      html: `<div class="pin pin--${stale ? 'stale' : alert ? 'alert' : 'ok'}"><i></i></div>`,
-      iconSize: [32, 32],
-      iconAnchor: [16, 16],
+      html: `<div class="pin pin--${stale ? 'stale' : alert ? 'alert' : 'ok'}"><i class="pin__pulse"></i><svg viewBox="0 0 32 42" width="32" height="42" aria-hidden="true"><path d="M16 40.5S2.5 27.6 2.5 16a13.5 13.5 0 0 1 27 0C29.5 27.6 16 40.5 16 40.5z" fill="currentColor" stroke="#fff" stroke-width="2.5"/><circle cx="16" cy="16" r="5.5" fill="#fff"/></svg></div>`,
+      iconSize: [40, 48],
+      iconAnchor: [20, 46],
     });
     const latlng: L.LatLngTuple = [position.latitude, position.longitude];
     if (!marker.current) {
