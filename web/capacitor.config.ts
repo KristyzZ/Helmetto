@@ -12,7 +12,7 @@ const config: CapacitorConfig = {
   ios: {
     // The app handles the notch and home indicator itself (viewport-fit=cover).
     contentInset: 'never',
-    backgroundColor: '#edf0f3',
+    // Background colours (light and dark) are set in SceneDelegate.swift.
   },
 };
 
