@@ -3,6 +3,8 @@
 #include <WiFiClientSecureBearSSL.h>
 #include <time.h>
 #include <Wire.h>
+#include <SoftwareSerial.h>
+#include <TinyGPS++.h>
 #include <espnow.h>
 
 extern "C" {
@@ -36,14 +38,31 @@ constexpr uint8_t MPU_ACCEL_DATA = 0x3B;
 constexpr uint32_t WARNING_THRESHOLD_MS = 3000;
 constexpr uint32_t DISCONNECT_TIMEOUT_MS = 15000;
 constexpr uint32_t MPU_READ_INTERVAL_MS = 10;
+// Fixed demo pin at ISM, Gedimino pr. 7, Vilnius.
+constexpr bool USE_DEMO_LOCATION = false;
+constexpr char DEMO_LOCATION_JSON[] = ",\"latitude\":54.686943,\"longitude\":25.282761";
+constexpr uint32_t GPS_WAIT_BEFORE_WIFI_MS = 30000;
+constexpr int MAX_WIFI_ACCESS_POINTS = 12;
+bool wifiScanAttempted = false;
+bool wifiScanRunning = false;
+String wifiScanJson;
+
+constexpr int GPS_RX_PIN = 12;
+constexpr uint32_t GPS_MAX_AGE_MS = 3000;
+constexpr uint32_t GPS_STATUS_INTERVAL_MS = 5000;
+constexpr bool PRINT_MPU_READINGS = false;
 constexpr uint32_t MPU_PRINT_INTERVAL_MS = 500;
 constexpr float IMPACT_THRESHOLD_G = 2.5f;
 constexpr uint32_t IMPACT_COOLDOWN_MS = 1000;
 
 volatile uint32_t lastSignal = 0;
 volatile bool heartbeatReceived = false;
+volatile int8_t receivedHelmetWorn = -1;
+int8_t helmetWorn = -1;
 bool mpuReady = false;
 bool impactPending = false;
+SoftwareSerial gpsSerial;
+TinyGPSPlus gps;
 WiFiEventHandler wifiDisconnectHandler;
 uint32_t lastWifiAttempt = 0;
 
@@ -57,7 +76,9 @@ enum HelmetState {
 HelmetState helmetState = NOT_FOUND;
 
 void onReceive(uint8_t *, uint8_t *data, uint8_t length) {
-  if (length != 1 || data[0] != 1) return;
+  if ((length != 1 && length != 2) || data[0] != 1) return;
+  if (length == 2 && data[1] > 1) return;
+  receivedHelmetWorn = length == 2 ? static_cast<int8_t>(data[1]) : -1;
 
   lastSignal = millis();
   heartbeatReceived = true;
@@ -67,6 +88,7 @@ void updateHelmet() {
   noInterrupts();
   const bool received = heartbeatReceived;
   const uint32_t last = lastSignal;
+  const int8_t worn = receivedHelmetWorn;
   interrupts();
 
   if (!received) return;
@@ -79,6 +101,12 @@ void updateHelmet() {
     next = WAITING;
   }
 
+  const int8_t nextWorn = next == DISCONNECTED ? -1 : worn;
+  if (nextWorn != helmetWorn) {
+    helmetWorn = nextWorn;
+    Serial.printf("Helmet FSR received: helmet_worn=%s\n",
+                  helmetWorn < 0 ? "unknown" : (helmetWorn ? "true" : "false"));
+  }
   if (next == helmetState) return;
   helmetState = next;
 
@@ -135,11 +163,6 @@ void readMpu(uint32_t now) {
   const float ax = readMpuWord() / MPU_ACCEL_LSB_PER_G;
   const float ay = readMpuWord() / MPU_ACCEL_LSB_PER_G;
   const float az = readMpuWord() / MPU_ACCEL_LSB_PER_G + MPU_Z_CORRECTION_G;
-  readMpuWord();  // Temperature
-  const float gx = readMpuWord() / 131.0f;
-  const float gy = readMpuWord() / 131.0f;
-  const float gz = readMpuWord() / 131.0f;
-
   const float accelerationSquared = ax * ax + ay * ay + az * az;
   const bool aboveThreshold = accelerationSquared >= IMPACT_THRESHOLD_G * IMPACT_THRESHOLD_G;
   static bool wasAboveThreshold = false;
@@ -154,12 +177,76 @@ void readMpu(uint32_t now) {
   }
   wasAboveThreshold = aboveThreshold;
 
+  if (!PRINT_MPU_READINGS) return;
   static uint32_t lastPrint = 0;
   if (now - lastPrint < MPU_PRINT_INTERVAL_MS) return;
   lastPrint = now;
 
+  readMpuWord();  // Temperature
+  const float gx = readMpuWord() / 131.0f;
+  const float gy = readMpuWord() / 131.0f;
+  const float gz = readMpuWord() / 131.0f;
+
   Serial.printf("ACC: %.2f %.2f %.2f g | GYRO: %.1f %.1f %.1f deg/s\n",
                 ax, ay, az, gx, gy, gz);
+}
+
+bool hasGpsFix() {
+  return gps.location.isValid() && gps.location.age() <= GPS_MAX_AGE_MS &&
+         (gps.location.lat() != 0.0 || gps.location.lng() != 0.0);
+}
+
+void updateGps(uint32_t now) {
+  while (gpsSerial.available() > 0) {
+    gps.encode(gpsSerial.read());
+  }
+
+  static uint32_t lastStatus = 0;
+  static uint32_t lastChars = 0;
+  if (now - lastStatus < GPS_STATUS_INTERVAL_MS) return;
+  lastStatus = now;
+  const uint32_t chars = gps.charsProcessed();
+  if (chars == lastChars) {
+    Serial.println("GPS: no UART data (check TX, GND and power)");
+  } else if (!hasGpsFix()) {
+    Serial.println("GPS: receiving data, waiting for fix");
+  } else {
+    Serial.printf("GPS: %.6f, %.6f\n", gps.location.lat(), gps.location.lng());
+  }
+  lastChars = chars;
+}
+
+void updateWifiLocation(uint32_t now, bool connected) {
+  if (wifiScanRunning) {
+    const int count = WiFi.scanComplete();
+    if (count == WIFI_SCAN_RUNNING) return;
+    wifiScanRunning = false;
+
+    if (count > 0 && !hasGpsFix()) {
+      wifiScanJson = "[";
+      int included = 0;
+      for (int i = 0; i < count && included < MAX_WIFI_ACCESS_POINTS; i++) {
+        const uint8_t *mac = WiFi.BSSID(i);
+        const int rssi = WiFi.RSSI(i);
+        if (!mac || (mac[0] & 3) != 0 || rssi < -128 || rssi > -10) continue;
+        if (included++) wifiScanJson += ',';
+        wifiScanJson += "{\"macAddress\":\"" + WiFi.BSSIDstr(i) +
+                       "\",\"signalStrength\":" + String(rssi) + '}';
+      }
+      wifiScanJson += ']';
+      if (included < 2) wifiScanJson = "";
+      Serial.printf("Wi-Fi location scan: %d usable access points\n", included);
+    }
+    WiFi.scanDelete();
+  }
+
+  if (hasGpsFix()) wifiScanJson = "";
+  if (!connected || wifiScanAttempted || hasGpsFix() || now < GPS_WAIT_BEFORE_WIFI_MS ||
+      TELEMETRY_URL[0] == '\0' || TELEMETRY_DEVICE_KEY[0] == '\0') return;
+
+  wifiScanAttempted = true;
+  wifiScanRunning = WiFi.scanNetworks(true) == WIFI_SCAN_RUNNING;
+  Serial.println(wifiScanRunning ? "Wi-Fi location scan started" : "Wi-Fi location scan unavailable");
 }
 
 int postTelemetry(WiFiClient &client, const String &body) {
@@ -182,9 +269,31 @@ void updateTelemetry(uint32_t now, bool wifiConnected) {
   lastAttempt = now;
 
   const bool helmetConnected = helmetState == CONNECTED || helmetState == WAITING;
+  const char *worn = helmetWorn < 0 ? "null" : (helmetWorn ? "true" : "false");
   const char *crashDetected = !mpuReady ? "null" : impactPending ? "true" : "false";
   String body = String("{\"helmet_connected\":") + (helmetConnected ? "true" : "false") +
-                ",\"crash_detected\":" + crashDetected + "}";
+                ",\"helmet_worn\":" + worn +
+                ",\"crash_detected\":" + crashDetected;
+  if (USE_DEMO_LOCATION) {
+    body += DEMO_LOCATION_JSON;
+    body += ",\"location_source\":\"demo\"";
+  } else if (hasGpsFix()) {
+    body += ",\"location_source\":\"gps\"";
+    body += ",\"latitude\":";
+    body += String(gps.location.lat(), 6);
+    body += ",\"longitude\":";
+    body += String(gps.location.lng(), 6);
+    if (gps.speed.isValid() && gps.speed.age() <= GPS_MAX_AGE_MS) {
+      const double speed = gps.speed.kmph();
+      if (speed >= 0.0 && speed <= 200.0) {
+        body += ",\"speed_kmh\":";
+        body += String(speed, 2);
+      }
+    }
+  }
+  const bool sendingWifiScan = !USE_DEMO_LOCATION && !hasGpsFix() && wifiScanJson.length() > 0;
+  if (sendingWifiScan) body += ",\"wifi_access_points\":" + wifiScanJson;
+  body += '}';
 
   int status;
   if (strncmp(TELEMETRY_URL, "https://", 8) == 0) {
@@ -209,6 +318,7 @@ void updateTelemetry(uint32_t now, bool wifiConnected) {
   if (status == HTTP_CODE_OK) {
     if (impactPending) Serial.println("Telemetry sent: impact");
     impactPending = false;
+    if (sendingWifiScan) wifiScanJson = "";
   } else {
     Serial.printf("Telemetry POST failed: %d\n", status);
   }
@@ -216,6 +326,11 @@ void updateTelemetry(uint32_t now, bool wifiConnected) {
 
 void setup() {
   Serial.begin(115200);
+  if (USE_DEMO_LOCATION) {
+    Serial.println("Demo location: ISM Vilnius");
+  } else {
+    gpsSerial.begin(9600, SWSERIAL_8N1, GPS_RX_PIN, -1, false, 256, 2048);
+  }
   initMpu();
 
   WiFi.persistent(false);
@@ -284,6 +399,10 @@ void loop() {
     readMpu(now);
   }
 
+  if (!USE_DEMO_LOCATION) {
+    updateGps(now);
+    updateWifiLocation(now, wifiConnected);
+  }
   updateTelemetry(now, wifiConnected);
   delay(1);
 }
