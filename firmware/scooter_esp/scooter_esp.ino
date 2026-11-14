@@ -58,6 +58,8 @@ constexpr uint32_t IMPACT_COOLDOWN_MS = 1000;
 volatile uint32_t lastSignal = 0;
 volatile bool heartbeatReceived = false;
 volatile int8_t receivedHelmetWorn = -1;
+volatile uint32_t notWornSince = 0;
+constexpr uint32_t NOT_WORN_DELAY_MS = 15000;
 int8_t helmetWorn = -1;
 bool mpuReady = false;
 bool impactPending = false;
@@ -78,9 +80,13 @@ HelmetState helmetState = NOT_FOUND;
 void onReceive(uint8_t *, uint8_t *data, uint8_t length) {
   if ((length != 1 && length != 2) || data[0] != 1) return;
   if (length == 2 && data[1] > 1) return;
-  receivedHelmetWorn = length == 2 ? static_cast<int8_t>(data[1]) : -1;
-
-  lastSignal = millis();
+  const uint32_t now = millis();
+  const int8_t worn = length == 2 ? static_cast<int8_t>(data[1]) : -1;
+  if (worn == 0 && (receivedHelmetWorn != 0 || now - lastSignal >= WARNING_THRESHOLD_MS)) {
+    notWornSince = now;
+  }
+  receivedHelmetWorn = worn;
+  lastSignal = now;
   heartbeatReceived = true;
 }
 
@@ -89,6 +95,7 @@ void updateHelmet() {
   const bool received = heartbeatReceived;
   const uint32_t last = lastSignal;
   const int8_t worn = receivedHelmetWorn;
+  const uint32_t since = notWornSince;
   interrupts();
 
   if (!received) return;
@@ -101,7 +108,14 @@ void updateHelmet() {
     next = WAITING;
   }
 
-  const int8_t nextWorn = next == DISCONNECTED ? -1 : worn;
+  int8_t nextWorn = helmetWorn;
+  if (next == DISCONNECTED || worn < 0) {
+    nextWorn = -1;
+  } else if (worn == 1) {
+    nextWorn = 1;
+  } else if (last - since >= NOT_WORN_DELAY_MS) {
+    nextWorn = 0;
+  }
   if (nextWorn != helmetWorn) {
     helmetWorn = nextWorn;
     Serial.printf("Helmet FSR received: helmet_worn=%s\n",
@@ -358,7 +372,7 @@ void setup() {
 
   if (WIFI_SSID[0] != '\0') {
     lastWifiAttempt = millis();
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD, WIFI_CHANNEL);
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
     Serial.println("Connecting to Wi-Fi...");
   } else {
     Serial.println("Wi-Fi credentials unset; starting with ESP-NOW only");
