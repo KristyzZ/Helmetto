@@ -20,7 +20,15 @@ import {
 export const API_BASE = ((import.meta.env.VITE_API_URL as string | undefined) ?? '').replace(/\/+$/, '');
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(API_BASE + url, init);
+  let res: Response;
+  try {
+    res = await fetch(API_BASE + url, init);
+  } catch {
+    // iOS says "Load failed", Chrome "Failed to fetch": both mean the server wasn't reached.
+    throw new Error(
+      `Can't reach the Helmetto server${API_BASE ? ` at ${API_BASE}` : ''}, so nothing was saved. Try again once the top shows Live.`,
+    );
+  }
   if (!res.ok) {
     let message = `Request failed (${res.status})`;
     try {

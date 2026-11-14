@@ -59,7 +59,9 @@
 	<false/>
 	<key>NSAppTransportSecurity</key>
 	<dict>
-		<key>NSAllowsLocalNetworking</key>
+		<!-- Test servers are plain http: a Mac by name (.local) or by number (e.g. 172.20.10.7 on a hotspot).
+		     NSAllowsLocalNetworking alone doesn't cover numbers. Use https and remove this for the App Store. -->
+		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>

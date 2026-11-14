@@ -44,8 +44,12 @@ echo "server: $SERVER"
 VITE_API_URL="$SERVER" npm run build -w web || fail "Building the app failed."
 (cd web && npx cap sync ios) || fail "Copying the app into Xcode failed."
 
-# 4. The local server, in its own Terminal window, if it should run on this Mac and isn't.
-if [[ "$SERVER" == *.local:3000 ]] && ! lsof -iTCP:3000 -sTCP:LISTEN >/dev/null 2>&1; then
+# 4. The local server, in its own Terminal window, if it should run on this Mac and isn't:
+#    the address is this Mac by name (Name.local) or by number (e.g. 172.20.10.7 on a hotspot).
+HOST="${SERVER#*://}"; HOST="${HOST%%[:/]*}"
+THIS_MAC=" $(scutil --get LocalHostName).local localhost 127.0.0.1 $(ifconfig | awk '/inet /{print $2}' | tr '\n' ' ') "
+if [[ "$THIS_MAC" == *" $HOST "* ]] && [[ "$SERVER" == *:3000 || "$SERVER" == *:3000/ ]] && ! lsof -iTCP:3000 -sTCP:LISTEN >/dev/null 2>&1; then
   open -a Terminal "$IOS_DIR/start-server.command"
 fi
+echo "this Mac on the network: $(ipconfig getifaddr en0 2>/dev/null || echo unknown)"
 echo "done"
