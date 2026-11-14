@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { routes, type DeviceState, type DevicesResponse, type SafetyEvent } from '@helmetto/shared';
+import { EVENT_INFO, routes, type DeviceState, type DevicesResponse, type SafetyEvent } from '@helmetto/shared';
 import { API_BASE, api } from './api';
 
 /**
@@ -35,11 +35,20 @@ interface Cache {
   savedAt: string;
 }
 
+/**
+ * Events this app knows how to show. A server running another version (or a
+ * database written by one) can send types this app has no title or icon for,
+ * and showing those would crash the Alerts tab, so they are left out.
+ */
+const known = (events: SafetyEvent[]) => events.filter((e) => Object.hasOwn(EVENT_INFO, e.type));
+
 /** The last status this phone received, so the app can show it while offline. */
 function readCache(): Cache | null {
   try {
     const cache = JSON.parse(localStorage.getItem(CACHE_KEY) ?? 'null') as Cache | null;
-    return cache && Array.isArray(cache.devices) ? cache : null;
+    if (!cache || !Array.isArray(cache.devices)) return null;
+    const alerts = Object.fromEntries(Object.entries(cache.alerts ?? {}).map(([id, list]) => [id, known(list)]));
+    return { ...cache, alerts };
   } catch {
     return null;
   }
@@ -99,10 +108,11 @@ export function useLive(onNewEvent: (event: SafetyEvent) => void): Live {
     let disposed = false;
     let streamOpen = false;
 
-    const mergeAlerts = (deviceId: string, incoming: SafetyEvent[]) => {
-      const known = seen.current[deviceId];
-      const fresh = known === undefined ? [] : incoming.filter((e) => e.id > known);
-      seen.current[deviceId] = Math.max(known ?? 0, ...incoming.map((e) => e.id));
+    const mergeAlerts = (deviceId: string, received: SafetyEvent[]) => {
+      const last = seen.current[deviceId];
+      seen.current[deviceId] = Math.max(last ?? 0, ...received.map((e) => e.id));
+      const incoming = known(received);
+      const fresh = last === undefined ? [] : incoming.filter((e) => e.id > last);
       setAlerts((all) => {
         const existing = all[deviceId] ?? [];
         const byId = new Map(incoming.map((e) => [e.id, e]));
