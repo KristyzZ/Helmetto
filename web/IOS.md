@@ -33,7 +33,7 @@ If something failed you get a macOS notification; the details are in
 To reset all demo data: close the server window, then
 
 ```bash
-rm -f ~/Helmetto/Helmetto/data/scooter.db* ~/Helmetto/Helmetto/api/data/scooter.db*
+find ~/Helmetto/Helmetto/data ~/Helmetto/Helmetto/api/data -name 'scooter.db*' -delete 2>/dev/null
 ```
 
 and press Run again.
