@@ -10,6 +10,7 @@ import {
   ALERT_HELP,
   EVENT_ICON,
   alertTone,
+  eventTitle,
   childName,
   chips,
   hasReported,
@@ -160,6 +161,8 @@ export function Dashboard(props: {
             alert={summary.tone === 'alert'}
             zone={device.geofence}
             zoneTone={zone.tone === 'warn' ? 'unknown' : zone.tone}
+            places={device.places}
+            atPlaceId={device.online && !offline ? device.at_place_id : null}
             follow
             interactive={false}
           />
@@ -244,7 +247,7 @@ export function Dashboard(props: {
                 <li key={event.id} className={`timeline__item tone-${event.severity === 'alert' ? 'alert' : 'ok'}`}>
                   <time dateTime={event.created_at}>{clock(event.created_at)}</time>
                   <i className="timeline__dot" />
-                  <span>{title(event.type)}</span>
+                  <span>{eventTitle(event)}</span>
                 </li>
               ))}
             </ol>

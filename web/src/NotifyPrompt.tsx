@@ -35,7 +35,7 @@ export function NotifyPrompt({ name }: { name: string }) {
       <span className="notify-prompt__icon"><Icon name="bell" size={20} /></span>
       <span className="notify-prompt__text">
         <strong>Get alerts on this phone</strong>
-        <small>When {name} rides without a helmet, leaves the safe zone or may have crashed.</small>
+        <small>When {name} gets to a place you marked, rides without a helmet, leaves the safe zone or may have crashed.</small>
       </span>
       <button className="button button--primary notify-prompt__on" onClick={async () => setPermission(await requestNotifyPermission())}>
         Turn on

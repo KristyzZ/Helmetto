@@ -6,6 +6,10 @@ import {
   GEOFENCE_MIN_AREA_M2,
   GEOFENCE_MIN_POINTS,
   GEOFENCE_MIN_RADIUS_M,
+  NAME_MAX_LENGTH,
+  PLACES_MAX,
+  PLACE_MAX_RADIUS_M,
+  PLACE_MIN_RADIUS_M,
   type DeviceState,
   type GeoPoint,
   type GeofenceInput,
@@ -13,10 +17,18 @@ import {
 import { api } from '../api';
 import { Icon } from '../icons';
 import { MapView, type Draft } from '../MapView';
-import { location, locationLabel, visibleAlerts, zoneLabel } from '../status';
+import { Sheet } from '../Sheet';
+import { childName, location, locationLabel, visibleAlerts, zoneLabel } from '../status';
 
 const DEFAULT_RADIUS_M = 250;
 const SLIDER_MAX_M = Math.min(2000, GEOFENCE_MAX_RADIUS_M);
+
+const PLACE_RADIUS_M = 80;
+/** Quick names for a new place. */
+const PLACE_NAMES = ['School', 'Home', "Grandma's", 'Club'];
+
+/** A place being added: a name and a circle. */
+type PlaceDraft = { name: string; center: GeoPoint | null; radius_m: number };
 
 const formatRadius = (m: number) => (m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${m} m`);
 
@@ -39,8 +51,12 @@ export function MapPage(props: { device: DeviceState; serverNow: number; onSaved
   const [history, setHistory] = useState<GeoPoint[][]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [placesOpen, setPlacesOpen] = useState(false);
+  const [place, setPlace] = useState<PlaceDraft | null>(null);
 
   const { position, live } = location(device);
+  const places = device.places ?? [];
+  const child = childName(device);
   const zone = zoneLabel(device);
   const saved = device.geofence;
   const issue = draft ? problem(draft) : null;
@@ -91,6 +107,41 @@ export function MapPage(props: { device: DeviceState; serverNow: number; onSaved
       setBusy(false);
     }
   };
+  const addPlace = (name = '') => {
+    setPlacesOpen(false);
+    setError(null);
+    setFollow(false);
+    setPlace({ name, center: here, radius_m: PLACE_RADIUS_M });
+  };
+  const savePlace = async () => {
+    if (!place?.center || !place.name.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      props.onSaved(
+        await api.addPlace(device.device_id, {
+          name: place.name.trim(),
+          latitude: place.center.lat,
+          longitude: place.center.lon,
+          radius_m: place.radius_m,
+        }),
+      );
+      setPlace(null);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const removePlace = async (id: number) => {
+    setError(null);
+    try {
+      props.onSaved(await api.deletePlace(device.device_id, id));
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
   const save = () => {
     if (!draft || issue) return;
     const body: GeofenceInput =
@@ -108,14 +159,17 @@ export function MapPage(props: { device: DeviceState; serverNow: number; onSaved
         alert={device.online && visibleAlerts(device).length > 0}
         zone={saved}
         zoneTone={zone.tone === 'warn' ? 'unknown' : zone.tone}
-        draft={draft}
-        draftInvalid={issue?.invalid}
-        onDraftChange={change}
-        follow={follow && !draft}
+        places={places}
+        atPlaceId={device.online ? device.at_place_id : null}
+        keepZone={!!place}
+        draft={place ? { shape: 'circle', center: place.center, radius_m: place.radius_m } : draft}
+        draftInvalid={place ? false : issue?.invalid}
+        onDraftChange={(next) => (place ? next.shape === 'circle' && setPlace({ ...place, center: next.center, radius_m: next.radius_m }) : change(next))}
+        follow={follow && !draft && !place}
         onUserMove={() => setFollow(false)}
       />
 
-      {!draft && (
+      {!draft && !place && (
         <>
           <div className="map-top">
             <span className="pill"><i className={`dot tone-${live ? 'ok' : 'unknown'}`} />{locationLabel(device, serverNow)}</span>
@@ -128,12 +182,103 @@ export function MapPage(props: { device: DeviceState; serverNow: number; onSaved
                 <Icon name="target" />
               </button>
             )}
-            <button className="button button--primary button--float" onClick={start}>
-              <Icon name="draw" size={18} />
-              {saved ? 'Edit zone' : 'Draw zone'}
-            </button>
+            <div className="map-bottom__row">
+              <button className="button button--float" onClick={() => setPlacesOpen(true)}>
+                <Icon name="flag" size={18} />
+                Places{places.length > 0 ? ` · ${places.length}` : ''}
+              </button>
+              <button className="button button--primary button--float" onClick={start}>
+                <Icon name="draw" size={18} />
+                {saved ? 'Edit zone' : 'Draw zone'}
+              </button>
+            </div>
           </div>
         </>
+      )}
+
+      {placesOpen && (
+        <Sheet title="Places" icon="flag" onClose={() => setPlacesOpen(false)}>
+          <p>
+            Mark where {child ?? 'your child'} rides to. You get a notification when {child ?? 'they'}{' '}
+            {child ? 'gets' : 'get'} there.
+          </p>
+          {places.length > 0 && (
+            <ul className="list places">
+              {places.map((p) => {
+                const there = device.online && device.at_place_id === p.id;
+                return (
+                  <li key={p.id} className="row row--static">
+                    <span className={`disc disc--sm disc--place ${there ? 'disc--here' : ''}`}><Icon name="flag" size={16} /></span>
+                    <span className="row__text">
+                      <strong>{p.name}</strong>
+                      <small>{there ? `${child ?? 'The scooter'} is here now` : `${formatRadius(p.radius_m)} around the pin`}</small>
+                    </span>
+                    <button className="icon-button" onClick={() => removePlace(p.id)} aria-label={`Remove ${p.name}`}>
+                      <Icon name="close" size={18} />
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          {error && <p className="meta meta--bad">{error}</p>}
+          {places.length < PLACES_MAX ? (
+            <div className="sheet__actions">
+              <button className="button button--primary" onClick={() => addPlace()}>
+                <Icon name="flag" size={18} /> Add a place
+              </button>
+            </div>
+          ) : (
+            <p className="meta">That's the most places a scooter can have. Remove one to add another.</p>
+          )}
+        </Sheet>
+      )}
+
+      {place && (
+        <div className="editor" role="dialog" aria-label="New place">
+          <div className="editor__head">
+            <strong className="editor__title">New place</strong>
+            <button className="icon-button" onClick={() => { setPlace(null); setError(null); }} aria-label="Cancel">
+              <Icon name="close" size={20} />
+            </button>
+          </div>
+          <label className="field">
+            <span>Name</span>
+            <input
+              value={place.name}
+              maxLength={NAME_MAX_LENGTH}
+              placeholder="e.g. School"
+              onChange={(e) => setPlace({ ...place, name: e.target.value })}
+            />
+          </label>
+          <div className="quick-names">
+            {PLACE_NAMES.map((name) => (
+              <button key={name} className="quick-name" aria-pressed={place.name === name} onClick={() => setPlace({ ...place, name })}>
+                {name}
+              </button>
+            ))}
+          </div>
+          <p className={`editor__hint ${error ? 'editor__hint--bad' : ''}`} role="status">
+            {error ?? (place.center ? 'Tap the map or drag the dot to move it.' : 'Tap the map where it is.')}
+          </p>
+          <label className="slider">
+            <span>Size</span>
+            <input
+              type="range"
+              min={PLACE_MIN_RADIUS_M}
+              max={PLACE_MAX_RADIUS_M}
+              step={10}
+              value={place.radius_m}
+              onChange={(e) => setPlace({ ...place, radius_m: Number(e.target.value) })}
+            />
+            <strong>{formatRadius(place.radius_m)}</strong>
+          </label>
+          <div className="editor__actions">
+            <button className="button button--primary button--grow" disabled={busy || !place.center || !place.name.trim()} onClick={savePlace}>
+              {busy ? 'Saving…' : 'Save place'}
+            </button>
+          </div>
+        </div>
       )}
 
       {draft && (

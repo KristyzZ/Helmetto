@@ -8,6 +8,7 @@ import {
   type DeviceUpdate,
   type DevicesResponse,
   type GeofenceInput,
+  type PlaceInput,
   type SafetyEvent,
 } from '@helmetto/shared';
 
@@ -47,6 +48,9 @@ export const api = {
     request<DeviceState>(routes.deviceGeofence(deviceId), { method: 'DELETE' }),
   updateDevice: (deviceId: string, update: DeviceUpdate) =>
     request<DeviceState>(routes.device(deviceId), json('PATCH', update)),
+  addPlace: (deviceId: string, place: PlaceInput) => request<DeviceState>(routes.devicePlaces(deviceId), json('POST', place)),
+  deletePlace: (deviceId: string, placeId: number) =>
+    request<DeviceState>(routes.devicePlace(deviceId, placeId), { method: 'DELETE' }),
   acknowledge: (eventId: number, by: string | null) => request<SafetyEvent>(routes.alertAck(eventId), json('POST', { by })),
   demoStatus: () => request<DemoStatus>(routes.demo()),
   runDemo: (scenario: DemoScenario | 'stop') => request<DemoStatus>(routes.demo(), json('POST', { scenario })),

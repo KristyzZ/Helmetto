@@ -1,6 +1,6 @@
 import L from 'leaflet';
 import { useEffect, useRef } from 'react';
-import type { GeoPoint, Geofence } from '@helmetto/shared';
+import type { GeoPoint, Geofence, Place } from '@helmetto/shared';
 
 /** The zone being edited. */
 export type Draft =
@@ -17,6 +17,12 @@ export interface MapViewProps {
   /** Saved safe zone, hidden while a draft is being edited. */
   zone: Geofence | null;
   zoneTone?: 'ok' | 'alert' | 'unknown';
+  /** Places the parents marked ("School"), with a name tag each. */
+  places?: Place[];
+  /** The place the scooter is at now: its tag is highlighted. */
+  atPlaceId?: number | null;
+  /** Keep showing the saved zone while a draft is edited (the draft is a place, not the zone). */
+  keepZone?: boolean;
   draft?: Draft | null;
   /** Draw the draft in the alert colour (e.g. its lines cross). */
   draftInvalid?: boolean;
@@ -43,12 +49,13 @@ function zoneLayer(zone: Geofence, style: L.PathOptions): L.Path {
 
 /** Thin React wrapper around a Leaflet map with OpenStreetMap tiles. */
 export function MapView(props: MapViewProps) {
-  const { position, stale, alert, zone, zoneTone = 'unknown', draft, draftInvalid, follow, interactive = true } = props;
+  const { position, stale, alert, zone, zoneTone = 'unknown', places, atPlaceId, keepZone, draft, draftInvalid, follow, interactive = true } = props;
   const container = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map | null>(null);
   const marker = useRef<L.Marker | null>(null);
   const zoneRef = useRef<L.Path | null>(null);
   const draftLayers = useRef<L.LayerGroup | null>(null);
+  const placeLayers = useRef<L.LayerGroup | null>(null);
   const live = useRef(props);
   live.current = props;
 
@@ -75,6 +82,7 @@ export function MapView(props: MapViewProps) {
       maxZoom: 19,
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
     }).addTo(instance);
+    placeLayers.current = L.layerGroup().addTo(instance);
     draftLayers.current = L.layerGroup().addTo(instance);
 
     // a tap on the map adds a corner (polygon) or moves the centre (circle)
@@ -98,6 +106,7 @@ export function MapView(props: MapViewProps) {
       marker.current = null;
       zoneRef.current = null;
       draftLayers.current = null;
+      placeLayers.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -135,7 +144,7 @@ export function MapView(props: MapViewProps) {
     if (!instance) return;
     zoneRef.current?.remove();
     zoneRef.current = null;
-    if (zone && !draft) {
+    if (zone && (!draft || keepZone)) {
       const color = css(zoneTone === 'unknown' ? '--ink' : `--${zoneTone}-solid`);
       zoneRef.current = zoneLayer(zone, {
         color,
@@ -145,7 +154,30 @@ export function MapView(props: MapViewProps) {
         interactive: false,
       }).addTo(instance);
     }
-  }, [zoneKey, zoneTone, !!draft]);
+  }, [zoneKey, zoneTone, !!draft, keepZone]);
+
+  // marked places: a soft circle and a name tag
+  const placesKey = places ? JSON.stringify(places) : '';
+  useEffect(() => {
+    const group = placeLayers.current;
+    if (!group) return;
+    group.clearLayers();
+    const color = css('--brand');
+    for (const place of places ?? []) {
+      const here = place.id === atPlaceId;
+      L.circle([place.latitude, place.longitude], {
+        radius: place.radius_m, color, weight: 1.5, dashArray: '4 5', fillColor: color, fillOpacity: here ? 0.16 : 0.08, interactive: false,
+      }).addTo(group);
+      const tag = document.createElement('div');
+      tag.className = `place-tag ${here ? 'place-tag--here' : ''}`;
+      tag.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 21V3.5"/><path d="M6 4.5h11.5l-2.5 4 2.5 4H6"/></svg>';
+      tag.append(place.name); // text node: names are typed by people
+      L.marker([place.latitude, place.longitude], {
+        icon: L.divIcon({ className: 'place-tag__anchor', html: tag, iconSize: [0, 0] }),
+        interactive: false, keyboard: false, zIndexOffset: -200,
+      }).addTo(group);
+    }
+  }, [placesKey, atPlaceId]);
 
   // fit the map to the zone when editing starts
   const editing = !!draft;

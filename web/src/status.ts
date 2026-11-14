@@ -1,4 +1,4 @@
-import { EVENT_INFO, type AlertType, type DeviceState, type SafetyEventType } from '@helmetto/shared';
+import { EVENT_INFO, type AlertType, type DeviceState, type Place, type SafetyEvent, type SafetyEventType } from '@helmetto/shared';
 import type { IconName } from './icons';
 import { ago, duration } from './time';
 
@@ -16,9 +16,19 @@ export const EVENT_ICON: Record<SafetyEventType, IconName> = {
   geofence_enter: 'zone',
   scooter_offline: 'signalOff',
   scooter_online: 'signal',
+  place_arrived: 'flag',
 };
 
 export const title = (type: SafetyEventType) => EVENT_INFO[type].title;
+/** An event's title in lists: arrivals name the place. */
+export const eventTitle = (event: SafetyEvent) =>
+  event.type === 'place_arrived' && event.place_name ? `Arrived at ${event.place_name}` : title(event.type);
+
+/** The marked place the scooter is at right now (live GPS only), or null. */
+export function atPlace(device: DeviceState): Place | null {
+  if (!device.online || device.at_place_id == null) return null;
+  return device.places?.find((p) => p.id === device.at_place_id) ?? null;
+}
 export const alertTone = (type: AlertType): Tone => (type === 'scooter_offline' ? 'warn' : 'alert');
 
 /** The longer explanation, shown only in the details sheet. */
@@ -198,6 +208,8 @@ export function location(device: DeviceState) {
 export function locationLabel(device: DeviceState, serverNow: number): string {
   const { position, live } = location(device);
   if (!position) return 'No location yet';
+  const place = live ? atPlace(device) : null;
+  if (place) return `At ${place.name}`;
   return live ? 'Live location' : `Last seen here ${ago(device.last_location?.at ?? null, serverNow)}`;
 }
 

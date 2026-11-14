@@ -5,13 +5,14 @@ import { API_BASE } from './api';
 import { DemoPanel } from './DemoPanel';
 import { Icon, type IconName } from './icons';
 import { useLive } from './live';
+import { showNotification } from './notify';
 import { useSafetyNotifications } from './safetyNotifications';
 import { Alerts } from './pages/Alerts';
 import { Dashboard } from './pages/Dashboard';
 import { Devices } from './pages/Devices';
 import { MapPage } from './pages/MapPage';
-import { EVENT_ICON, alertTone, displayName, title, visibleAlerts } from './status';
-import { useNow } from './time';
+import { EVENT_ICON, alertTone, displayName, eventTitle, title, visibleAlerts } from './status';
+import { clock, useNow } from './time';
 
 type Tab = 'home' | 'map' | 'alerts' | 'devices';
 const TABS: { id: Tab; label: string; icon: IconName }[] = [
@@ -73,6 +74,10 @@ export function App() {
     // so a toast is only for what would otherwise go unseen: recoveries, and
     // alerts about another scooter.
     const other = event.device_id !== current.current.deviceId;
+    if (event.type === 'place_arrived' && event.place_name) {
+      const who = current.current.names[event.device_id] ?? 'The scooter';
+      void showNotification(`${who} arrived at ${event.place_name}`, `At ${clock(event.created_at)}.`, `${event.device_id}:place`);
+    }
     if (event.severity === 'alert' && !other) return;
     // An impact is reported for a moment only; the crash plan stays up until someone
     // is on it, so "crash cleared" would wrongly sound like the all-clear.
@@ -226,7 +231,7 @@ export function App() {
           }}
         >
           <i className={`dot tone-${toast.event.severity === 'alert' ? 'alert' : 'ok'}`} />
-          <strong>{toast.about ? `${toast.about}: ` : ''}{title(toast.event.type)}</strong>
+          <strong>{toast.about ? `${toast.about}: ` : ''}{eventTitle(toast.event)}</strong>
         </button>
       )}
 

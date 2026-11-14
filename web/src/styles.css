@@ -457,3 +457,26 @@ code { background: var(--surface-2); padding: 1px 5px; border-radius: 5px; font-
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
+
+/* ---- Places ("School"): arrival notifications ---------------------------------- */
+.map-bottom__row { display: flex; gap: var(--s2); }
+.button--float:not(.button--primary) { background: var(--surface); color: var(--ink); }
+.place-tag__anchor { overflow: visible; }
+.place-tag {
+  position: absolute; left: 0; top: 0; transform: translate(-50%, -50%);
+  display: inline-flex; align-items: center; gap: 4px; padding: 4px 9px 4px 7px;
+  border-radius: var(--r-pill); background: var(--surface); color: var(--brand);
+  font: 600 12px/1.2 inherit; font-family: inherit; white-space: nowrap;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.22); pointer-events: none;
+}
+.place-tag--here { background: var(--brand); color: #fff; animation: tag-pop 0.45s cubic-bezier(0.3, 1.5, 0.6, 1); }
+@keyframes tag-pop { from { transform: translate(-50%, -50%) scale(0.4); } }
+.disc--place { background: var(--brand-tint); color: var(--brand); }
+.disc--here { background: var(--brand); color: #fff; }
+.places { margin-top: var(--s2); }
+.places .row { padding-right: var(--s2); }
+.editor__title { font-size: var(--fs-md); font-weight: 700; }
+.quick-names { display: flex; flex-wrap: wrap; gap: var(--s2); margin-top: calc(-1 * var(--s1)); }
+.quick-name { padding: 7px 14px; border-radius: var(--r-pill); background: var(--surface-2); color: var(--text-2); font-size: var(--fs-sm); font-weight: 600; }
+.quick-name[aria-pressed='true'] { background: var(--brand-tint); color: var(--brand); }
+.meta--bad { color: var(--alert-fg); font-weight: 600; }

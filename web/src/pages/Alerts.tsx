@@ -5,7 +5,7 @@ import { Icon } from '../icons';
 import { notifyPermission, requestNotifyPermission, type NotifyPermission } from '../notify';
 import { CrashPlan } from '../CrashPlan';
 import { Sheet } from '../Sheet';
-import { ALERT_HELP, EVENT_ICON, alertLine, alertTone, title, visibleAlerts } from '../status';
+import { ALERT_HELP, EVENT_ICON, alertLine, alertTone, eventTitle, title, visibleAlerts } from '../status';
 import { clock, dayLabel, duration } from '../time';
 
 function Notifications() {
@@ -117,7 +117,7 @@ export function Alerts(props: {
                   <li key={event.id}>
                     <button className="row row--slim" onClick={() => setOpenEvent(event)}>
                       <i className={`dot tone-${event.severity === 'alert' ? 'alert' : 'ok'}`} />
-                      <span className="row__text"><span>{title(event.type)}</span></span>
+                      <span className="row__text"><span>{eventTitle(event)}</span></span>
                       <time dateTime={event.created_at}>{clock(event.created_at)}</time>
                     </button>
                   </li>
@@ -148,7 +148,7 @@ export function Alerts(props: {
       )}
       {openEvent && (
         <Sheet
-          title={title(openEvent.type)}
+          title={eventTitle(openEvent)}
           icon={EVENT_ICON[openEvent.type]}
           tone={openEvent.severity === 'alert' ? 'alert' : 'ok'}
           onClose={() => setOpenEvent(null)}

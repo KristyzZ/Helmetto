@@ -14,6 +14,7 @@ const LOOK: Partial<Record<DemoScenario, { icon: IconName; tone: Tone }>> = {
   crash: { icon: 'alert', tone: 'alert' },
   'geofence-exit': { icon: 'zone', tone: 'alert' },
   offline: { icon: 'signalOff', tone: 'warn' },
+  'arrive-place': { icon: 'flag', tone: 'ok' },
 };
 
 /** Hidden panel: tap the logo five times, or open the app with #demo. */
