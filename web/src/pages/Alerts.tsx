@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Capacitor } from '@capacitor/core';
 import type { AlertType, DeviceState, SafetyEvent } from '@helmetto/shared';
 import { Icon } from '../icons';
 import { notifyPermission, requestNotifyPermission, type NotifyPermission } from '../notify';
@@ -96,7 +97,7 @@ export function Alerts(props: {
         )}
       </section>
 
-      <Notifications />
+      {!Capacitor.isNativePlatform() && <Notifications />}
 
       <section>
         <h2 className="label">History</h2>

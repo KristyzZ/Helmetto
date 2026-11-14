@@ -55,7 +55,10 @@ export function Dashboard(props: {
   const crash = crashToHandle(device, events, serverNow);
   // An impact is reported for a moment only: until someone is on it, keep the sticker red.
   const base = hero(device, serverNow);
-  const crashOpen = !!crash && !crash.acknowledged_at && base.alert !== 'crash_detected';
+  // Only stand in for a calm state: an active alert or "offline" is more current and stays visible.
+  // Once the scooter is riding again, the sticker shows that; the plan below still asks to check.
+  const ridingAgain = device.online && (device.telemetry?.speed_kmh ?? 0) > 1;
+  const crashOpen = !!crash && !crash.acknowledged_at && base.alert === null && !ridingAgain;
   const summary = crashOpen
     ? {
         ...base,

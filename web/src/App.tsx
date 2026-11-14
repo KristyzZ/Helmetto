@@ -56,6 +56,9 @@ export function App() {
     // alerts about another scooter.
     const other = event.device_id !== current.current.deviceId;
     if (event.severity === 'alert' && !other) return;
+    // An impact is reported for a moment only; the crash plan stays up until someone
+    // is on it, so "crash cleared" would wrongly sound like the all-clear.
+    if (event.type === 'crash_cleared') return;
     setToast({ event, about: other ? (current.current.names[event.device_id] ?? null) : null });
     clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(null), TOAST_MS);
@@ -220,7 +223,15 @@ export function App() {
         ))}
       </nav>
 
-      {demoOpen && <DemoPanel onClose={() => setDemoOpen(false)} />}
+      {demoOpen && (
+        <DemoPanel
+          onClose={() => {
+            setDemoOpen(false);
+            // Opened from #demo: drop it, or the panel comes back on every reload.
+            if (location.hash === '#demo') history.replaceState(null, '', `#${tab}`);
+          }}
+        />
+      )}
     </div>
   );
 }
