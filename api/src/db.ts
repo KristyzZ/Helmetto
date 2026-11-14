@@ -45,6 +45,11 @@ CREATE INDEX IF NOT EXISTS events_by_device ON events(device_id, id DESC);
 const ADDED_COLUMNS: Record<string, string> = {
   child_name: 'TEXT',
   geofence_points: 'TEXT', // JSON [{lat, lon}], set for polygon zones only
+  child_phone: 'TEXT',
+};
+const ADDED_EVENT_COLUMNS: Record<string, string> = {
+  acknowledged_at: 'INTEGER',
+  acknowledged_by: 'TEXT',
 };
 
 export const hashKey = (key: string) => createHash('sha256').update(key).digest('hex');
@@ -55,6 +60,7 @@ export interface DeviceRow {
   parentId: string;
   name: string;
   childName: string | null;
+  childPhone: string | null;
   lastSeenAt: number | null;
   telemetry: Telemetry | null;
   conditions: Conditions;
@@ -70,6 +76,7 @@ function toDevice(raw: Raw): DeviceRow {
     parentId: raw.parent_id,
     name: raw.name,
     childName: raw.child_name ?? null,
+    childPhone: raw.child_phone ?? null,
     lastSeenAt: raw.last_seen_at ?? null,
     telemetry: raw.telemetry ? JSON.parse(raw.telemetry) : null,
     conditions: raw.conditions ? { ...NO_CONDITIONS, ...JSON.parse(raw.conditions) } : { ...NO_CONDITIONS },
@@ -101,6 +108,8 @@ function toEvent(raw: Raw): SafetyEvent {
     created_at: new Date(raw.created_at).toISOString(),
     latitude: raw.latitude ?? null,
     longitude: raw.longitude ?? null,
+    acknowledged_at: raw.acknowledged_at != null ? new Date(raw.acknowledged_at).toISOString() : null,
+    acknowledged_by: raw.acknowledged_by ?? null,
   };
 }
 
@@ -116,6 +125,10 @@ export class Store {
     const existing = new Set((this.db.prepare('PRAGMA table_info(devices)').all() as Raw[]).map((c) => c.name));
     for (const [column, type] of Object.entries(ADDED_COLUMNS)) {
       if (!existing.has(column)) this.db.exec(`ALTER TABLE devices ADD COLUMN ${column} ${type}`);
+    }
+    const eventColumns = new Set((this.db.prepare('PRAGMA table_info(events)').all() as Raw[]).map((c) => c.name));
+    for (const [column, type] of Object.entries(ADDED_EVENT_COLUMNS)) {
+      if (!eventColumns.has(column)) this.db.exec(`ALTER TABLE events ADD COLUMN ${column} ${type}`);
     }
     this.db
       .prepare('INSERT OR IGNORE INTO parents (id, name) VALUES (?, ?)')
@@ -163,7 +176,7 @@ export class Store {
   saveDevice(device: DeviceRow): void {
     this.db
       .prepare(
-        `UPDATE devices SET name = ?, child_name = ?, last_seen_at = ?, telemetry = ?, conditions = ?,
+        `UPDATE devices SET name = ?, child_name = ?, child_phone = ?, last_seen_at = ?, telemetry = ?, conditions = ?,
            last_lat = ?, last_lon = ?, last_location_at = ?,
            geofence_lat = ?, geofence_lon = ?, geofence_radius_m = ?, geofence_points = ?
          WHERE id = ?`,
@@ -171,6 +184,7 @@ export class Store {
       .run(
         device.name,
         device.childName,
+        device.childPhone,
         device.lastSeenAt,
         device.telemetry ? JSON.stringify(device.telemetry) : null,
         JSON.stringify(device.conditions),
@@ -200,7 +214,26 @@ export class Store {
         event.latitude,
         event.longitude,
       );
-    return { ...event, id: Number(result.lastInsertRowid), created_at: new Date(event.created_at).toISOString() };
+    return {
+      ...event,
+      id: Number(result.lastInsertRowid),
+      created_at: new Date(event.created_at).toISOString(),
+      acknowledged_at: null,
+      acknowledged_by: null,
+    };
+  }
+
+  getEvent(eventId: number): SafetyEvent | null {
+    const row = this.db.prepare('SELECT * FROM events WHERE id = ?').get(eventId) as Raw | undefined;
+    return row ? toEvent(row) : null;
+  }
+
+  /** Mark an event as seen. The first acknowledgement wins; later ones change nothing. */
+  acknowledgeEvent(eventId: number, by: string | null, at: number): SafetyEvent | null {
+    this.db
+      .prepare('UPDATE events SET acknowledged_at = ?, acknowledged_by = ? WHERE id = ? AND acknowledged_at IS NULL')
+      .run(at, by, eventId);
+    return this.getEvent(eventId);
   }
 
   /** Newest first. `beforeId` pages further back. */

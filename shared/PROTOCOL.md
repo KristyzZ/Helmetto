@@ -234,6 +234,7 @@ All scooters of the parent.
 ```
 
 - `child_name` is the rider's name, or `null` when not set. Alert messages use it ("Emma left the safe zone.").
+- `child_phone` is the child's phone number as the parent typed it, or `null`. The app's crash plan calls it.
 - `geofence` is `null` when no zone is set; see `PUT .../geofence` below for its two shapes.
 - `online: false` with `last_seen_at: null` → the scooter has never reported.
 - `online: false` otherwise → **scooter offline**; `telemetry` is the *last known*
@@ -332,13 +333,31 @@ Remove the safe zone. Returns the new `DeviceState`.
 
 ### `PATCH /api/devices/:deviceId`
 
-Rename the scooter and/or set the child's name. Send only the fields to change.
-Names are 1–40 characters; `"child_name": null` clears it. Returns the new `DeviceState`.
+Rename the scooter and/or set the child's name or phone number. Send only the fields to change.
+Names are 1–40 characters; `"child_name": null` clears it. `child_phone` is up to 24
+characters of digits, spaces, `+`, `-`, `(` and `)`; `null` or `""` clears it.
+Returns the new `DeviceState`.
 
 ```bash
 curl -X PATCH "http://localhost:3000/api/devices/scooter-001" \
   -H "Content-Type: application/json" \
   -d '{"child_name":"Emma"}'
+```
+
+### `POST /api/alerts/:eventId/ack`
+
+A parent pressed **I'm on it**. Body: `{"by": "Mum"}` (optional, 1–40 characters).
+Only `severity: "alert"` events can be acknowledged (`409 not_an_alert` otherwise,
+`404 unknown_event` for an unknown id). The first acknowledgement wins: later ones
+return the event unchanged. Returns the `SafetyEvent` with `acknowledged_at` and
+`acknowledged_by` set, and every open app gets it as an `alert_update` stream event.
+
+Every `SafetyEvent` has these two fields; both are `null` until someone acknowledges it.
+
+```bash
+curl -X POST "http://localhost:3000/api/alerts/42/ack" \
+  -H "Content-Type: application/json" \
+  -d '{"by":"Mum"}'
 ```
 
 ### `GET /api/stream` (Server-Sent Events)
@@ -350,6 +369,7 @@ Live updates. Named events, each `data:` line is JSON:
 | `hello` | `{ "devices": DeviceState[] }` | Once, on connect |
 | `state` | `DeviceState` | Every telemetry, offline timeout, geofence change |
 | `alert` | `SafetyEvent` (same shape as in `/alerts`) | A new alert or recovery was logged |
+| `alert_update` | `SafetyEvent`, same `id` as before | An existing alert changed, e.g. someone pressed **I'm on it** |
 
 A `: keepalive` comment is sent every 15 s. Clients that can't use SSE can poll
 `GET /api/devices` instead.

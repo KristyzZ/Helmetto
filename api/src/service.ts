@@ -56,6 +56,7 @@ export class SafetyService extends EventEmitter {
       device_id: device.id,
       name: device.name,
       child_name: device.childName,
+      child_phone: device.childPhone,
       online: device.lastSeenAt !== null && !device.conditions.scooter_offline,
       last_seen_at: device.lastSeenAt === null ? null : new Date(device.lastSeenAt).toISOString(),
       telemetry: t,
@@ -129,16 +130,31 @@ export class SafetyService extends EventEmitter {
     return this.toState(device);
   }
 
-  /** Rename the scooter or set the child's name. */
+  /** Rename the scooter, or set the child's name or phone number. */
   updateDevice(deviceId: string, update: DeviceUpdate): DeviceState | null {
     const device = this.store.getDevice(deviceId);
     if (!device) return null;
     if (update.name !== undefined) device.name = update.name;
     if (update.child_name !== undefined) device.childName = update.child_name;
+    if (update.child_phone !== undefined) device.childPhone = update.child_phone;
     this.store.saveDevice(device);
     const state = this.toState(device);
     this.emit('state', state);
     return state;
+  }
+
+  /**
+   * A parent pressed "I'm on it". Only alerts can be acknowledged; the first
+   * acknowledgement wins. Every open app gets the updated event.
+   */
+  acknowledge(eventId: number, by: string | null): SafetyEvent | 'not_found' | 'not_an_alert' {
+    const event = this.store.getEvent(eventId);
+    if (!event) return 'not_found';
+    if (event.severity !== 'alert') return 'not_an_alert';
+    if (event.acknowledged_at) return event;
+    const updated = this.store.acknowledgeEvent(eventId, by, this.now())!;
+    this.emit('alert_update', updated);
+    return updated;
   }
 
   /** Mark scooters that went silent as offline. Called on a timer. */

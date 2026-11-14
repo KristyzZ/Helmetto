@@ -21,6 +21,8 @@ export const GEOFENCE_MAX_POINTS = 50;
 /** Smallest drawn zone the server accepts (about 20 m x 20 m). */
 export const GEOFENCE_MIN_AREA_M2 = 400;
 export const NAME_MAX_LENGTH = 40;
+/** Longest phone number accepted for a child, as typed (spaces and symbols count). */
+export const PHONE_MAX_LENGTH = 24;
 
 export const ALERT_TYPES: readonly AlertType[] = [
   'crash_detected',

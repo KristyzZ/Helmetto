@@ -286,3 +286,73 @@ describe('SSE stream', () => {
     controller.abort();
   });
 });
+
+describe('crash plan: phone number and "I\'m on it"', () => {
+  const patch = (body: unknown) =>
+    fetch(`${base}/api/devices/test-scooter`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  const ack = (eventId: number, body: unknown = {}) =>
+    fetch(`${base}/api/alerts/${eventId}/ack`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  const latest = async () =>
+    ((await (await fetch(`${base}/api/devices/test-scooter/alerts?limit=5`)).json()) as AlertsResponse).alerts;
+
+  it('saves, clears and validates the child\'s phone number', async () => {
+    const saved = (await (await patch({ child_phone: ' +370 612 34567 ' })).json()) as DeviceState;
+    expect(saved.child_phone).toBe('+370 612 34567');
+    expect((await state()).child_phone).toBe('+370 612 34567');
+    expect((await patch({ child_phone: 'call me' })).status).toBe(400);
+    expect((await patch({ child_phone: '1'.repeat(25) })).status).toBe(400);
+    expect(((await (await patch({ child_phone: '' })).json()) as DeviceState).child_phone).toBeNull();
+  });
+
+  it('acknowledges an alert once, keeps the first name, and refuses recoveries and unknown ids', async () => {
+    await post(reading({ crash_detected: true }));
+    const crash = (await latest()).find((e) => e.type === 'crash_detected')!;
+    expect(crash.acknowledged_at).toBeNull();
+
+    const first = await ack(crash.id, { by: ' Mum ' });
+    expect(first.status).toBe(200);
+    expect(await first.json()).toMatchObject({ id: crash.id, acknowledged_by: 'Mum' });
+    expect((await (await ack(crash.id, { by: 'Dad' })).json()) as { acknowledged_by: string }).toMatchObject({
+      acknowledged_by: 'Mum',
+    });
+    expect((await latest()).find((e) => e.id === crash.id)?.acknowledged_by).toBe('Mum');
+
+    await post(reading());
+    const cleared = (await latest()).find((e) => e.type === 'crash_cleared')!;
+    expect((await ack(cleared.id)).status).toBe(409);
+    expect((await ack(999_999)).status).toBe(404);
+    expect((await ack(crash.id, { by: 'x'.repeat(41) })).status).toBe(400);
+  });
+
+  it('tells every open app through the stream', async () => {
+    const controller = new AbortController();
+    const res = await fetch(`${base}/api/stream`, { signal: controller.signal });
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let text = '';
+    const readUntil = async (needle: string) => {
+      while (!text.includes(needle)) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        text += decoder.decode(value);
+      }
+    };
+    await readUntil('event: hello');
+    await post(reading({ crash_detected: true }));
+    await readUntil('event: alert');
+    const crash = (await latest()).find((e) => e.type === 'crash_detected' && !e.acknowledged_at)!;
+    await ack(crash.id, { by: 'Dad' });
+    await readUntil('event: alert_update');
+    expect(text).toContain('"acknowledged_by":"Dad"');
+    controller.abort();
+    await post(reading());
+  });
+});

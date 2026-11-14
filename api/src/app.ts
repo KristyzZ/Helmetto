@@ -15,7 +15,7 @@ import type { Config } from './config';
 import type { Store } from './db';
 import type { DemoRunner } from './demo';
 import type { SafetyService } from './service';
-import { deviceUpdateSchema, geofenceSchema, telemetrySchema, validationError } from './validation';
+import { acknowledgeSchema, deviceUpdateSchema, geofenceSchema, telemetrySchema, validationError } from './validation';
 
 const SSE_KEEPALIVE_MS = 15_000;
 
@@ -99,6 +99,18 @@ export function createApp(deps: {
     res.json(state);
   });
 
+  // A parent pressed "I'm on it" on an alert. Everyone else sees it through the stream.
+  app.post(ROUTE_PATTERNS.alertAck, (req, res) => {
+    const eventId = Number(req.params.eventId);
+    if (!Number.isInteger(eventId) || eventId < 1) return fail(res, 404, 'unknown_event', 'No such alert');
+    const parsed = acknowledgeSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return res.status(400).json(validationError(parsed.error));
+    const result = service.acknowledge(eventId, parsed.data.by ?? null);
+    if (result === 'not_found') return fail(res, 404, 'unknown_event', 'No such alert');
+    if (result === 'not_an_alert') return fail(res, 409, 'not_an_alert', 'Only alerts can be acknowledged');
+    res.json(result);
+  });
+
   // ---- Live updates (Server-Sent Events) ------------------------------------------
   app.get(ROUTE_PATTERNS.stream, (req, res) => {
     res.writeHead(200, {
@@ -115,13 +127,16 @@ export function createApp(deps: {
 
     const onState = (state: unknown) => send('state', state);
     const onAlert = (alert: unknown) => send('alert', alert);
+    const onAlertUpdate = (alert: unknown) => send('alert_update', alert);
     service.on('state', onState);
     service.on('alert', onAlert);
+    service.on('alert_update', onAlertUpdate);
     const keepalive = setInterval(() => res.write(': keepalive\n\n'), SSE_KEEPALIVE_MS);
     req.on('close', () => {
       clearInterval(keepalive);
       service.off('state', onState);
       service.off('alert', onAlert);
+      service.off('alert_update', onAlertUpdate);
     });
   });
 

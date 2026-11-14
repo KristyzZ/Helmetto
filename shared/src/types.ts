@@ -82,6 +82,10 @@ export interface SafetyEvent {
   /** Where the scooter was when it happened, if known. */
   latitude: number | null;
   longitude: number | null;
+  /** When a parent pressed "I'm on it"; null/missing = nobody yet. Alerts only. */
+  acknowledged_at?: string | null;
+  /** Who pressed it, as they typed their name; null = no name given. */
+  acknowledged_by?: string | null;
 }
 
 export type ZoneStatus = 'inside' | 'outside' | 'unknown';
@@ -99,6 +103,8 @@ export interface DeviceState {
   name: string;
   /** Name of the child who rides this scooter; null/missing = not set. */
   child_name?: string | null;
+  /** The child's phone number, for "Call" in the crash plan; null/missing = not set. */
+  child_phone?: string | null;
   /**
    * Scooter sent telemetry within the last 30 s.
    * false + helmet data present means "scooter offline", NOT "helmet disconnected":
@@ -125,6 +131,14 @@ export interface DeviceUpdate {
   name?: string;
   /** null clears the name. */
   child_name?: string | null;
+  /** null clears the number. Digits, spaces, +, -, ( and ) only. */
+  child_phone?: string | null;
+}
+
+/** Body of POST /api/alerts/:eventId/ack. */
+export interface AcknowledgeRequest {
+  /** Who is handling it, e.g. "Mum"; null/missing = no name. */
+  by?: string | null;
 }
 
 export interface DevicesResponse {
@@ -172,4 +186,6 @@ export interface StreamEvents {
   state: DeviceState;
   /** A new safety event was logged. */
   alert: SafetyEvent;
+  /** An existing event changed, e.g. a parent pressed "I'm on it". Same id as before. */
+  alert_update: SafetyEvent;
 }

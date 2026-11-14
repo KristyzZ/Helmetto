@@ -12,6 +12,7 @@ export const ROUTE_PATTERNS = {
   deviceGeofence: '/api/devices/:deviceId/geofence',
   stream: '/api/stream',
   demo: '/api/demo',
+  alertAck: '/api/alerts/:eventId/ack',
 } as const;
 
 const id = (deviceId: string) => encodeURIComponent(deviceId);
@@ -27,6 +28,7 @@ export const routes = {
   deviceGeofence: (deviceId: string) => `/api/devices/${id(deviceId)}/geofence`,
   stream: () => '/api/stream',
   demo: () => '/api/demo',
+  alertAck: (eventId: number) => `/api/alerts/${eventId}/ack`,
 } as const;
 
 /** Header carrying the per-device API key on telemetry requests. */

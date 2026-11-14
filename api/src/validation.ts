@@ -7,6 +7,7 @@ import {
   GEOFENCE_MIN_POINTS,
   GEOFENCE_MIN_RADIUS_M,
   NAME_MAX_LENGTH,
+  PHONE_MAX_LENGTH,
   type ApiError,
   type Geofence,
 } from '@helmetto/shared';
@@ -74,6 +75,12 @@ export const geofenceSchema = z
 
 const nameSchema = z.string().trim().min(1, 'must not be empty').max(NAME_MAX_LENGTH);
 
+const phoneSchema = z
+  .string()
+  .trim()
+  .max(PHONE_MAX_LENGTH)
+  .regex(/^\+?[0-9][0-9 ()-]{2,}$/, 'use digits, spaces, +, -, ( and ) only');
+
 export const deviceUpdateSchema = z
   .object({
     name: nameSchema.optional(),
@@ -81,8 +88,22 @@ export const deviceUpdateSchema = z
       .union([nameSchema, z.literal(''), z.null()])
       .transform((v) => v || null)
       .optional(),
+    child_phone: z
+      .union([phoneSchema, z.literal(''), z.null()])
+      .transform((v) => v || null)
+      .optional(),
   })
-  .refine((v) => v.name !== undefined || v.child_name !== undefined, 'send name and/or child_name');
+  .refine(
+    (v) => v.name !== undefined || v.child_name !== undefined || v.child_phone !== undefined,
+    'send name, child_name and/or child_phone',
+  );
+
+export const acknowledgeSchema = z.object({
+  by: z
+    .union([nameSchema, z.literal(''), z.null()])
+    .transform((v) => v || null)
+    .optional(),
+});
 
 export function validationError(error: z.ZodError): ApiError {
   // For a union (circle | polygon) report the branch the client was aiming for.
